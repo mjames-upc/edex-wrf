@@ -1,0 +1,48 @@
+
+           *  Just because it's all about you:
+
+              Basic System Information for tg-atm160027-edex-ingest-wrf.openstacklocal
+              
+                  System Date           : Sat Mar 17 02:13:49 2018
+                  System Hostname       : tg-atm160027-edex-ingest-wrf.openstacklocal
+                  System Address        : None available
+              
+                  System OS             : Linux
+                  Linux Distribution    : CentOS release 6.9 (Final)
+                  OS Kernel             : 2.6.32-696.16.1.el6.x86_64
+                  Kernel Type           : x86_64
+              
+              Processor and Memory Information for tg-atm160027-edex-ingest-wrf.openstacklocal
+              
+                  CPU Name              : Intel(R) Xeon(R) CPU E5-2680 v3 @ 2.50GHz
+                  CPU Microarchitecture : haswell
+                  CPU Type              : x86_64
+                  CPU Speed             : 2.494 MHz
+              
+                  UEMS Determined Processor Count
+                      Sockets           : 10
+                      Cores per Socket  : 1
+                      Total Cores       : 10
+              
+                  Hyper-Threading       : Off   
+              
+                  System Memory         : 30 Gbytes
+              
+              UEMS Release Information for tg-atm160027-edex-ingest-wrf.openstacklocal
+              
+                  UEMS Release          : 18.3.1
+                  UEMS WRF Release      : 3.9.1
+                  UEMS Binaries         : x64
+               
+              A summary of nodes and processors used for the benchmark simulation:
+               
+                10 Processors on tg-atm160027-edex-ingest-wrf.openstacklocal
+              ------------------------------------------------------------------
+               
+                  *  10 Total Processors
+                  *  1  Tile per Processor
+                  *  1 x 10 Domain Decomposition
+
+
+           ☺  Benchmark simulation accomplished in 8 hours 58 minutes 56 seconds
+

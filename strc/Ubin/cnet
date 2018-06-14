@@ -1,0 +1,970 @@
+#!/usr/bin/perl
+#===============================================================================
+#
+#         FILE:  cnet
+#
+#  DESCRIPTION:  The cnet routine attempts to determine whether another system 
+#                is reachable from the machine on which it is being run. The
+#                program takes either a host name or IP address and then
+#                skillfully checks whether that address can be resolved on
+#                the network and if it up. 
+#
+#                If the answer to these questions is "Yes" then cnet spits
+#                out the hostname, IP, and network interface used to access
+#                the remote system.
+#
+#                A value of 0 indicates there was a problem, which may
+#                be better illuminated by passing the '--verbose' flag.
+#
+#                NOTE: At some point the gethostbyaddr and gethostbyname will
+#                      likely need to be replaced  with Socket::getaddrinfo,
+#                      and Socket::getnameinfo that support IPv6 and the fact
+#                      that gethostbyaddr and gethostbyname are now considered
+#                      "legacy".
+#
+#       AUTHOR:  Robert Rozumalski - NWS
+#      VERSION:  18.3.1
+#      CREATED:  08 March 2018
+#===============================================================================
+#
+use warnings;
+use strict;
+require 5.008;
+use English;
+
+use vars qw (%CheckNet $CMESG);
+
+#===============================================================================
+#   So CheckNet begins.  Note that while the %CheckNet hash is passed into
+#   the individual modules, it is global within a module. Any variables that
+#   are required later on will be carried in this hash.
+#===============================================================================
+#
+    CORE::exit 1  if &CheckNet_ReturnHandler(&CheckNet_Start());
+
+    CORE::exit 1  if &CheckNet_ReturnHandler(&CheckNet_Process());
+
+CORE::exit 0;
+
+
+sub CheckNet_Start {
+#===============================================================================
+#  This subroutine calls routines that perform the initial configuration for
+#  CheckNet prior to any real work being done. The responsibility of this 
+#  section is to:
+#
+#      1. Initialize the %CheckNet hash
+#      2. Read and parse the user input options
+#
+#  Note that the handling of the return is different here than with the other
+#  routines as a return of the %CheckNet hash indicates success when an empty
+#  hash means failure.
+#===============================================================================
+#
+    $CMESG = '';
+
+    return 12 unless %CheckNet = &CheckNet_GetOptions();
+
+    %{$CheckNet{localhost}}    = &SystemAddressInfo();
+
+return 0;
+}
+
+
+sub CheckNet_Process {
+#===============================================================================
+#  This routine loops through the list of hostnames passed to CheckNet, 
+#  collecting the necessary information and then prints out the results.
+#===============================================================================
+#
+    my $err = 0;
+    my ($hostname, $address, $iface, $ssh) = (0, 0, 0, 0);  #  Initialize the key variables
+
+
+    foreach my $host (@{$CheckNet{HOSTS}}) {
+
+        &PrintTerminal(2,4,255,1,1,"Collecting information about the machine known as \"$host\"") if $CheckNet{VERBOSE};
+
+        #-----------------------------------------------------------------------------------
+        #  Determine whether the argument passed is an IP address or hostname
+        #-----------------------------------------------------------------------------------
+        #
+        ($hostname, $address) = &isHostnameOrIP($host);
+
+        &PrintTerminal(1,6,255,1,1,"Following isHostnameOrIP     : $hostname || $address") if $CheckNet{DEBUG};
+
+        unless ($hostname || $address) {
+            &PrintTerminal(6,6,255,1,2,"Not Part of the Plan: \"$host\" is neither IP address nor hostname.") if $CheckNet{VERBOSE};
+            return 20;
+        }
+
+        
+        #-----------------------------------------------------------------------------------
+        #  Now that we have one ($hostname || $address), get the other
+        #-----------------------------------------------------------------------------------
+        #
+        if ($address) {
+            $hostname = &Address2Hostname($address);
+        } else {
+            $address  = &Hostname2Address($hostname);
+        }
+
+        &PrintTerminal(1,6,255,0,1,"Following IP Hostname Match  : $hostname || $address") if $CheckNet{DEBUG};
+
+        unless ($hostname and $address) {
+            my $mesg = $hostname ? "Oh Poop!  Could not map $hostname to an IP address" : "Oh Poop!  Could not map $address to a hostname";
+            &PrintTerminal(6,6,255,1,2,$mesg) if $CheckNet{VERBOSE};
+            return 20;
+        }
+
+        #-----------------------------------------------------------------------------------
+        #  Prefer a long hostname if possible but only if it maps to the same IP
+        #-----------------------------------------------------------------------------------
+        #
+        my $lhostname = &Address2Hostname($hostname);
+        my $laddress  = &Hostname2Address($lhostname);
+
+        $hostname = $lhostname if $address eq $laddress;
+
+        &PrintTerminal(1,6,255,0,1,"Following Long Hostname Match: $hostname || $address") if $CheckNet{DEBUG};
+
+
+        #-----------------------------------------------------------------------------------
+        #  Get the network interface used to communicate with the remote host.
+        #-----------------------------------------------------------------------------------
+        #
+        $iface = &Address2Iface($address);
+
+        &PrintTerminal(1,6,255,0,1,"Following Interface IP Match : $hostname || $address || $iface") if $CheckNet{DEBUG};
+
+        unless ($iface) { 
+           &PrintTerminal(6,6,255,1,2,"I was unable to determine the network interface used to communicate to $address") if $CheckNet{VERBOSE};
+           return 21;
+        }
+
+ 
+        #  Test whether the hostname points to the local host, in which case all the 
+        #  host information will be mined locally (Duh); otherwise, passwordless SSH
+        #  will be used.
+        #
+        unless ($CheckNet{NOSSH})  {
+
+            #  Since the system is not the local host, test whether it is available
+            #  and passwordless SSH can be used to run the commands necessary to 
+            #  collect the information.
+            #
+            if (my $notavail = (&TestHostAvailability($host) || &TestHostPasswdlessSSH($host))) {
+               &PrintTerminal(6,6,255,1,2,"Error connecting to $host: $notavail") if $CheckNet{VERBOSE};
+               $err = 22 unless $err;
+               next;
+            }
+            $ssh = 1;
+
+        }
+        &PrintTerminal(1,6,255,0,1,"Output to Screen             : $hostname || $address || $iface || $ssh") if $CheckNet{DEBUG};
+
+        #  Call the PrintNetworkInfo routine to print the information to the screen.
+        #
+        &PrintNetworkInfo($hostname, $address, $iface, $ssh);
+    }
+
+
+return $err;
+}
+
+
+sub CheckNet_ReturnHandler {
+#===============================================================================
+#  The purpose of this routine is to interpret the return codes from the various
+#  CheckNet subroutines. The value that is returned identifies the routine from
+#  which it was passed and any specific error, where the 10's digit identifies
+#  the routine and the 1s is the error. Some routines may provide more error
+#  information than others.
+#
+#  The routine itself returns 0 (CheckNet carries on) for success or 1 (CheckNet
+#  terminates) for failure.
+#===============================================================================
+#
+    my $rc = shift;
+
+    $CheckNet{VERBOSE} = 1 if $CMESG;
+
+    #  Return codes 11 - 19 are reserved for the CheckNet_Start Module
+    #
+    if ($rc == 11) {$CheckNet{VERBOSE} ? &PrintMessage(6,6,90,1,2,$CMESG || 'Apparently, cnet is upset with you at the moment.') : &PrintNetworkInfo(0,0,0,0);}
+    if ($rc == 12) {$CheckNet{VERBOSE} ? &PrintMessage(0,6,90,1,2,$CMESG || 'How are you going to explain this mess to your parents?!') : &PrintNetworkInfo(0,0,0,0);}
+
+    #  Return codes 20+ are reserved for the CheckNet_Process Module
+    #
+    if ($rc == 20) {$CheckNet{VERBOSE} ? &PrintMessage(0,6,90,1,2,$CMESG || '"What we have here, is failure to communicate"') : &PrintNetworkInfo(0,0,0,0);}
+    if ($rc == 21) {$CheckNet{VERBOSE} ? &PrintMessage(0,6,90,1,2,$CMESG || 'Well, your glass was half full - until you turned it upside down!') : &PrintNetworkInfo(0,0,0,0);}
+    if ($rc == 22) {$CheckNet{VERBOSE} ? &PrintMessage(0,6,90,1,2,$CMESG || 'Possible passwordless SSH problem?') : &PrintNetworkInfo(0,0,0,0);}
+
+return $rc ? 1 : 0;
+}
+
+
+sub CheckNet_GetOptions {
+#===============================================================================
+#  The CheckNet_GetOptions routine parses the flags and options passed
+#  from the command line. Simple enough.
+#===============================================================================
+#
+use Getopt::Long qw(:config pass_through);
+
+    my %Option = ();
+
+    GetOptions ( "h|help|?"       => sub {&CheckNet_HelpMe},  #  Just what the doctor ordered
+                 "V|v|verbose"    => \$Option{VERBOSE},      #  Dump out some information on CheckNet and get out
+                 "D|d|debug"      => \$Option{DEBUG},        #  Dump out even more useless information
+                 "nossh"          => \$Option{NOSSH}         #  Do not conduct passwordless SSH check
+               );
+
+
+    @{$Option{HOSTS}} = ();  
+    foreach (@ARGV) {$_ = lc $_;  push @{$Option{HOSTS}} => $_ if ! /^-/ and &isHostname($_); }
+
+    @{$Option{HOSTS}} = &rmdups(@{$Option{HOSTS}});
+
+    $Option{VERBOSE} = 1 if $Option{DEBUG};
+
+
+    unless (@{$Option{HOSTS}}) {
+        $CMESG = "Maybe you slept through \"UEMS indoctrination Fridays\", but there needs to be a valid ".
+                 "hostname or IP address passed as an argument. So, if you were looking for an argument, now ".
+                 "you've found one!";
+        return ();
+    }
+
+
+return %Option;
+}
+
+
+sub CheckNet_RoutineGuidance  {
+#===============================================================================
+#  This routine provides the basic structure for the ncpus help menu 
+#  should  the "--help" option is passed or something goes terribly wrong.
+#===============================================================================
+#
+    my $mesg  = qw{};
+    my @helps = ();
+
+    my $exe   = 'cnet'; my $uce = uc $exe;
+
+    my %opts  = &CheckNet_DefineOptions();  #  Get options list
+
+    push @helps => &TextFormat(0,0,114,0,1,"RUDIMENTARY GUIDANCE FOR $uce (Because you need it)");
+
+    $mesg = "The primary purpose of $exe is to determine whether another system is reachable from the ".
+            "machine on which it is being run. The program takes either a host name or IP address as an ".
+            "argument and then skillfully checks whether that address can be resolved on the local network ".
+            "and then if the system is reachable via (passwordless) ssh.\n\n".
+
+            "If the answer to those magic questions is \"Yes\", then $exe spits out the hostname, IP, and ".
+            "network interface used to reach the remote system.\n\n".
+
+            "Returned values of 0 (host, ip, iface, [ssh]) indicate that there was a problem, which may be ".
+            "better illuminated by passing the '--verbose' flag.";
+
+    push @helps => &TextFormat(2,2,90,1,1,$mesg);
+
+    push @helps => &TextFormat(0,0,114,2,1,"$uce USAGE:");
+    push @helps => &TextFormat(4,0,144,1,1,"% $exe  [--verbose] [--nossh] hostname1 ... hostnameN");
+
+    push @helps => &TextFormat(0,0,124,2,1,"AVAILABLE OPTIONS - BECAUSE I'M BEGINNING TO LIKE THAT NEFARIOUS TWINKLE IN YOUR EYE");
+
+    push @helps => &TextFormat(4,0,114,1,2,"Flag            Argument [optional]       Description");
+
+    foreach my $opt (sort keys %opts) {
+        push @helps => &TextFormat(4,0,256,0,1,sprintf("%-17s  %-18s  %-60s",$opt,$opts{$opt}{arg},$opts{$opt}{desc}));
+    }
+
+
+    push @helps => &TextFormat(0,0,114,2,2,"FOR ADDITIONAL HELP, LOVE AND UNDERSTANDING:");
+    push @helps => &TextFormat(6,0,114,0,1,"a. Read  - docs/uems/uemsguide  (just pick a chapter, any chapter)");
+    push @helps => &TextFormat(2,0,114,0,1,"Or");
+    push @helps => &TextFormat(6,0,114,0,1,"b. http://strc.comet.ucar.edu/software/uems");
+    push @helps => &TextFormat(2,0,114,0,1,"Or");
+    push @helps => &TextFormat(6,0,114,0,1,"c. % $exe --help  For this menu again, in case you missed it the first time");
+
+    my $help = join '' => @helps;
+
+return $help;
+}
+
+
+sub CheckNet_DefineOptions {
+#=====================================================================================
+#  This routine defined the list of options that can be passed to the program
+#  and returns them as a hash.
+#=====================================================================================
+#
+    my %opts = (
+                '--verbose'    => { arg => ''   , help => '&CheckNetHelp_verbose'  , desc => 'Provide some verbosermation (I made a new word!) about CheckNet'},
+                '--debug'      => { arg => ''   , help => '&CheckNetHelp_debug'    , desc => 'Provide even more verbosermation (It is in the lexicon now'},
+                '--nossh'      => { arg => ''   , help => '&CheckNetHelp_nossh'    , desc => 'Do not conduct passwordless SSH check'},
+                '--help'       => { arg => ''   , help => '&CheckNetHelp_help'     , desc => 'Print this list again'}
+                );
+
+return %opts;
+}
+
+
+sub CheckNet_HelpMe {
+#===============================================================================
+#  The CheckNet_HelpMe routine determines what to do when the --help flag is
+#  passed with or without an argument. 
+#===============================================================================
+#
+    &PrintTerminal(0,7,255,1,1,&CheckNet_RoutineGuidance);
+
+CORE::exit 0;
+}
+
+
+sub PrintNetworkInfo {
+#===============================================================================
+#  The PrintNetworkInfo routine simply prints the results to the screen
+#===============================================================================
+#
+    my ($hostname, $address, $iface, $ssh) = @_;
+
+    $CheckNet{NOSSH}   ? 
+        $CheckNet{VERBOSE} ? &PrintTerminal(0,4,255,1,2,"Hostname, Address, Interface   : $hostname, $address, $iface")
+                           : &PrintTerminal(0,2,255,0,1,"$hostname, $address, $iface")
+                       :
+        $CheckNet{VERBOSE} ? &PrintTerminal(0,4,255,1,2,"Hostname, Address, Interface, SSH Up (Yes:1, No:0): $hostname, $address, $iface, $ssh")
+                           : &PrintTerminal(0,2,255,0,1,"$hostname, $address, $iface, $ssh");
+
+
+return;
+}
+
+
+sub SystemAddressInfo {
+#==================================================================================
+#  This routine gathers information about the system hostname(s) and IP address(es)
+#  It returns a hash containing stuff it collected.
+#==================================================================================
+#
+use Sys::Hostname;
+use Net::hostent;
+use Socket;
+
+    my %info = ();
+
+    #------------------------------------------------------------------
+    #  Get basic hostname and IP information
+    #------------------------------------------------------------------
+    #
+    my $host0 = hostname;
+    my $shost = $host0;
+
+
+    #------------------------------------------------------------------
+    #  Check whether the hostname can be resolved via NIS/DNS. First
+    #  initialize the variables.
+    #------------------------------------------------------------------
+    #
+    my $host1 = '';
+    my $addr0 = `hostname -i`;
+    my $addr1 = 'None available';
+
+    #------------------------------------------------------------------
+    #
+    if (my $h = gethost($host0)) {  #  Is resolved vo
+       $host1 = $h->name;
+       $addr0 = inet_ntoa($h->addr);
+       unless (system "host $host1 > /dev/null 2>&1") {
+           my @hi = split / +/ => `host $host1`; $addr1 = $hi[-1];
+       }
+    }
+
+
+    $info{hostname0} = $host0;
+    $info{hostname1} = ($host1 and $host1 ne $host0) ? $host1 : 'None';
+    $info{nhost}     = $host1 ? $host1 : $host0;
+    $info{lhost}     = $info{nhost};
+    $info{shost}     = $shost;
+    
+    $info{address0}  = $addr0;
+    $info{address1}  = $addr1;
+
+    foreach my $key (keys %info) {chomp $info{$key};}
+
+    $info{hosts_file} = q{};
+    if ($addr0 ne $addr1) {  # Read the /etc/hosts file for additional information
+        open (my $fh, '<', '/etc/hosts'); my @hosts = <$fh>; close $fh; foreach (@hosts) {chomp; s/^\s*/    /g; s/\s+$//g;}
+        $info{hosts_file} = join "\n" => @hosts;
+    }
+
+    #---------------------------------------------------------------
+    #  Collect the interface information should it be needed
+    #---------------------------------------------------------------
+    #
+    %{$info{ifaces}} = &SystemIfaceInfo();
+
+ 
+    #  Finally, check the system date & time.  There really isn't any good place for this.
+    #  
+    my $date = gmtime(); chomp $date;
+    $info{sysdate} = $date;
+
+
+return %info;
+} #  SystemAddressInfo
+
+
+
+sub SystemIfaceInfo {
+#==================================================================================
+#  SystemIfaceInfo interrogates the local system network interfaces and returns
+#  a hash containing the interface name, hostname, and IP address, where:
+#
+#      $iface                  - The name in the network interface
+#      $myfaces{$iface}{ADDR}  - The IP address associated with the interface
+#      $myfaces{$iface}{HOST}  - Hostname if available
+#      $myfaces{$iface}{STATE} - Interface state (Up || Inactive)
+#==================================================================================
+#
+use Socket;
+use Net::hostent;
+
+
+    #------------------------------------------------------------------------
+    #  Start by collecting all the network interfaces on the local system
+    #------------------------------------------------------------------------
+    #
+    my %myfaces = ();
+    my %lips    = ();
+    my $iface   = qw{};
+
+    foreach ( qx{ (LC_ALL=C /sbin/ifconfig -a 2>&1) } ) {
+
+        $iface = $1 if /^(\S+?):?\s/;
+        next unless defined $iface;
+
+        $myfaces{$iface}{HOST}  = '' unless defined $myfaces{$iface}{HOST};
+        $myfaces{$iface}{ADDR}  = '' unless defined $myfaces{$iface}{ADDR};
+        $myfaces{$iface}{STATE} = '' unless defined $myfaces{$iface}{STATE};
+
+        $myfaces{$iface}{STATE} = 'Up'  if /\b(up )\b/i;
+        $myfaces{$iface}{ADDR}  = $1    if /inet\D+(\d+\.\d+\.\d+\.\d+)/i;
+
+        if ($myfaces{$iface}{ADDR} and ! $myfaces{$iface}{HOST}) {
+            if (my $ah = gethostbyaddr(inet_aton($myfaces{$iface}{ADDR}), AF_INET) ){
+                $myfaces{$iface}{HOST} = $ah->name;
+            }
+        }
+    }
+
+
+return %myfaces;
+}
+
+
+sub rmdups {
+#==================================================================================
+#  This routine eliminates duplicates from a list.
+#==================================================================================
+#
+    my @list=();
+    my %temp=();
+
+    foreach (@_) {push @list => $_ if defined $_;}
+    return @list unless @list;
+
+    @list = grep ++$temp{$_} < 2 => @list; 
+
+
+return @list;
+} #  rmdups
+
+
+sub Address2Hostname {
+#==================================================================================
+#  This routine takes an IP address and attempts to resolve the hostname. Either
+#  returns the fully qualified hostname or 0 if failure.  There is a problem
+#  in that gethostbyaddr will retrieve the first record from DNS, which may
+#  not be what you want is aliases are being used. If the returned hostname
+#  is not the one you wanted then use the Address2HostnameMatch subroutine
+#  instead.
+#==================================================================================
+#
+use Socket;
+use Net::hostent;
+
+    my $hostname = 0;
+    my $address  = shift || return $hostname;
+
+    if (my $ah = gethostbyaddr(inet_aton($address), AF_INET) ) {
+        $hostname = $ah->name;
+    }
+
+return $hostname;
+} #  Address2Hostname
+
+
+sub Hostname2Address {
+#==================================================================================
+#  This routine takes a hostname and attempts to get the IP address. Either
+#  returns the IP address or 0 if failure
+#==================================================================================
+#
+use Socket;
+
+    my $hostname  = shift || return 0;
+
+    return 0 unless my $iaddr = inet_aton $hostname;
+
+return inet_ntoa ( $iaddr );
+} #  Hostname2Address
+
+
+sub isHostnameOrIP {
+#==================================================================================
+#  Simple routine that checks whether the passed string could be a hostname
+#  or IP address.  Emphasis on the "could be".
+#==================================================================================
+#
+    my $input = shift || return (0, 0);
+
+    return (0, $input) if &isAddressIP($input);
+    return ($input, 0) if &isLongHostname($input);
+    return ($input, 0) if &isShortHostname($input);
+
+return (0, 0);
+} #  isHostnameOrIP
+
+
+sub isHostname {
+#==================================================================================
+#  Simple routine that checks whether the passed string meets the criteria for
+#  being a hostname or IP address. Yes, I am aware that "isHostname" is technically
+#  incorrect for a routine that includes a check for an IP address.
+#==================================================================================
+#
+    my $host = shift || return 0;
+
+    my $ih = &isAddressIP($host) + &isLongHostname($host) + &isShortHostname($host);
+
+return $ih;
+} #  isHostname
+
+
+sub isAddressIP {
+#==================================================================================
+#  This routine returns 1|0 depending whether in input is|is not an IP
+#==================================================================================
+#
+
+return (shift =~ /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/) ? 1 : 0;
+} #  isAddressIP
+
+
+sub isLongHostname {
+#==================================================================================
+#  This routine returns 1|0 depending whether in input is|is not a fully 
+#  qualified hostname .
+#==================================================================================
+#
+
+#  Note that changing the first "+" to "*" below will cause match to short hostname
+#
+return (shift =~ /^(?:(?:(?:(?:[a-zA-Z0-9][-a-zA-Z0-9]{0,61})?[a-zA-Z0-9])[.])+(?:[a-zA-Z][-a-zA-Z0-9]{0,61}[a-zA-Z0-9]|[a-zA-Z])[.]?)$/) ? 1 : 0;
+} #  isLongHostname
+
+
+sub isShortHostname {
+#==================================================================================
+#  This routine returns 1|0 depending whether in input is|is not a short hostname
+#  Matches any string that does not contain a '.', '~', (others stuff) or is a
+#  number (exponential notation not withstanding).
+#==================================================================================
+#
+
+return (shift =~ /(?!^\d+$)^[a-zA-Z0-9-]+$/ ) ? 1 : 0;
+} #  isShortHostname
+
+
+sub TestPingHost {
+#==================================================================================
+#  TestPingHost is a simple routine to test whether a system is alive. 
+#  Returns 1 for success (alive) and 0 for failure, which may be due to
+#  the host system being down or is blocking tcp pings.  The system ping
+#  command may work (icmp) but the Perl implementation requires root priv.
+#==================================================================================
+#
+use Net::Ping;
+use if defined eval{require Time::HiRes;} >0,  "Time::HiRes" => qw(time);
+
+    my $ping    = 0;  #  Set default to failure
+    my $timeout = 2;  #  Default 2 second timeout
+
+    my $host    = shift;
+
+    # ----------------------------------------------------------------------
+    #  Start with the Perl Ping command - default uses tcp
+    # ----------------------------------------------------------------------
+    #
+    my $pinger = Net::Ping->new();
+
+    $ping = $pinger->ping($host,$timeout)  ? 1 : 0; $pinger->close();
+
+    return $ping if $ping;
+
+    # ----------------------------------------------------------------------
+    #  The Perl ping failed but the system might be blocking tcp pings
+    #  so try system ping, which uses icmp. 
+    # ----------------------------------------------------------------------
+    #
+    $ping = (system "ping -q -c 2 $host > /dev/null 2>&1") ? 0 : 1;
+
+
+return $ping;
+}
+
+
+sub PrintMessage {
+#==================================================================================
+#  This routine manages all the messages being issues by the UEMS.  The arguments
+#  are similar to those used when calling uemsPrint routines - for now.
+#==================================================================================
+#
+    my ($sym,$ind,$wth,$lnl,$tnl,$msg1,$msg2,$opt,$lfh) = @_; return unless $msg1;
+     
+    $msg2 = '' unless defined $msg2 and $msg2;
+    $opt  = '' unless defined $opt  and $opt;
+    $lfh  = 0  unless defined $lfh  and $lfh;
+    
+
+
+    #------------------------------------------------------------------------
+    #  The PrintTerminal simply prints to the screen.
+    #------------------------------------------------------------------------
+    #
+    &PrintTerminal($sym,$ind,$wth,$lnl,$tnl,$msg1,$msg2,$opt) unless defined $ENV{VERBOSE} and ! $ENV{VERBOSE};
+
+
+    return unless $lfh;
+    #------------------------------------------------------------------------
+    #  The PrintFile used to be uemsPrintFile and prints info
+    #  to a log file with the $lfh filehandle.
+    #------------------------------------------------------------------------
+    #
+    &PrintFile($lfh,$sym,$ind,$wth,$lnl,$tnl,$msg1,$msg2,$opt);
+
+
+return;
+} #  PrintMessage
+
+
+
+sub PrintTerminal {
+#==================================================================================
+#  This routine prints all error, warning, and information statements to the
+#  user with a consistent format.
+#==================================================================================
+#
+use Text::Wrap;
+
+    my %spaces = ();
+       $spaces{X01X} = sprintf('%s',q{ } x 1);
+       $spaces{X02X} = sprintf('%s',q{ } x 2);
+       $spaces{X03X} = sprintf('%s',q{ } x 3);
+       $spaces{X04X} = sprintf('%s',q{ } x 4);
+       $spaces{X08X} = sprintf('%s',q{ } x 8);
+       $spaces{X16X} = sprintf('%s',q{ } x 16);
+       $spaces{X32X} = sprintf('%s',q{ } x 32);
+
+
+    my ($type,$indnt,$cols,$leadnl,$trailnl,$head,$body,$text)  = @_;
+
+    #  Note Types:
+    #
+    #    0 = ''
+    #    1 - "*"
+    #    2 - "\xe2\x98\xba"  Smiley Face
+    #    3 - "\xe2\x98\x85"  Black sun with rays
+    #    4 - "dbg"
+    #    5 - "->"
+    #    6 - "!"
+    #    7 - "\xe2\x9c\x93" Check Mark
+    #    9 - "\xe2\x98\xa0" Skull & Crossbones
+    #    # - &GetFunCharacter
+
+    #  Set defaults
+    #
+    local $Text::Wrap::columns = ($cols > 80) ? $cols : 80;  # sets the wrap point. Default is 80 columns.
+    local $Text::Wrap::separator="\n";
+    local $Text::Wrap::unexpand=0;  #  Was 1 - changed 3/2017
+
+    my $nl = "\n";
+
+    $head    = $nl unless $head;
+    $indnt   = ! $indnt ? 0 : $indnt < 0 ? 0 : $indnt;
+    $leadnl  = $leadnl  < 0 ? sprintf ("%s",$nl x 1) : sprintf ("%s",$nl x $leadnl);
+    $trailnl = $trailnl < 0 ? sprintf ("%s",$nl x 1) : sprintf ("%s",$nl x $trailnl);
+
+    #  Check for requested spaces as indicated by I\d\dX.
+    #
+    foreach my $nsp (keys %spaces) {
+        $head =~ s/$nsp/$spaces{$nsp}/g if $head;
+        $body =~ s/$nsp/$spaces{$nsp}/g if $body;
+        $text =~ s/$nsp/$spaces{$nsp}/g if $text;
+    }
+
+    my $symb  = ($type == 0) ? q{}            :
+                ($type == 1) ? '*'            :
+                ($type == 2) ? "\xe2\x98\xba" :
+                ($type == 3) ? "\xe2\x98\x85" :
+                ($type == 4) ? 'dbg'          :
+                ($type == 5) ? '->'           :
+                ($type == 6) ? '!'            :
+                ($type == 7) ? "\xe2\x9c\x93" :
+                ($type == 8) ? '+'            :
+                ($type == 9) ? "\xe2\x98\xa0" : &GetFunCharacter();
+
+
+    $text  = $text ? " ($text)" : q{};
+
+    #  Format the text
+    #
+    my $header = ($symb eq '*')     ? "$symb$text  " : 
+                 ($symb eq '!')     ? "$symb$text  " : 
+                 ($symb eq '->')    ? "$symb$text "  : 
+                 ($symb =~ /dbg/)   ? "$symb$text: " : 
+                 ($symb eq '+')     ? "$symb$text  " :
+                 ($symb)            ? "$symb$text  " : q{};
+
+    $head      = "$header$head";
+    $body      = "\n\n$body" if $body;
+
+    #  Format the indent
+    #
+    my $hindnt = $indnt < 0 ? sprintf('%s',q{ } x 1) : sprintf('%s',q{ } x $indnt);
+    my $bindnt = sprintf('%s',q{ } x length "$hindnt$header");
+
+    my $windnt = ($symb eq '*')     ? "   $hindnt"   : 
+                 ($symb eq '->')    ? "  $hindnt"    : 
+                 ($symb eq '!')     ? "   $hindnt"   : 
+                 ($symb eq '+')     ? "   $hindnt"   :
+                 ($symb)            ? "   $hindnt"   : $bindnt;
+
+    $| = 1;
+    print "$leadnl";
+    print wrap($hindnt,$windnt,$head);
+    print wrap($windnt,$windnt,$body)   if $body;
+    print "$trailnl";
+
+
+return;
+} #  PrintTerminal
+
+
+
+sub TextFormat {
+#==================================================================================
+#  Routine to format a sentence/paragraph for printing.  The arguments are:
+#
+#  $h_indnt  -  Number of spaces to indent the 1st line of the string $head
+#  $b_indnt  -  Number of spaces to indent remaining lines of $head or all of @body
+#  $wrapcol  -  Column number at which to wrap the paragraph, independent of indent
+#  $leadnl   -  Number of newlines before initial line of text
+#  $trailnl  -  Number of newlines after final line of text
+#  @body     -  Array of Character strings that make up the paragraph
+#==================================================================================
+#
+use Text::Wrap;
+
+    my $nl = "\n";
+
+    my ($h_indnt,$b_indnt,$wrapcol,$leadnl,$trailnl,@body)  = @_;
+
+    return '' unless @body;
+
+    my $head = shift @body;
+
+    #  Set defaults
+    #
+    local $Text::Wrap::columns = $wrapcol > 80 ? $wrapcol : 80;  # sets the wrap point. Default is 80 columns.
+    local $Text::Wrap::separator="\n";
+    local $Text::Wrap::unexpand=0;
+
+    $h_indnt = 0 unless $h_indnt =~ /^\d+$/;
+    $b_indnt = 0 unless $b_indnt =~ /^\d+$/;
+
+    $h_indnt   = ! $h_indnt ? 0 : $h_indnt < 0 ? 0 : $h_indnt;
+    $b_indnt   = ! $b_indnt ? 0 : $b_indnt < 0 ? 0 : $b_indnt;
+
+    $leadnl  = $leadnl  < 0 ? sprintf ('%s',$nl x 1) : sprintf ('%s',$nl x $leadnl);
+    $trailnl = $trailnl < 0 ? sprintf ('%s',$nl x 1) : sprintf ('%s',$nl x $trailnl);
+
+    my $hindnt = $h_indnt < 0 ? sprintf('%s',q{ } x 1) : sprintf('%s',q{ } x $h_indnt);
+    my $bindnt = sprintf('%s',q{ } x $b_indnt);
+
+    my $bodyA = wrap($hindnt,$bindnt,$head); $bodyA = "$bodyA\n\n" if @body;
+    my $bodyB = @body ? fill($bindnt,$bindnt,@body) : '';
+
+return "$leadnl$bodyA$bodyB$trailnl";
+} #  TextFormat
+
+
+
+sub Address2Iface {
+#==================================================================================
+#  This routine takes an IP address and attempts to identify the interface device
+#  on the local host used for communication. The routine begins by running the 
+#  system /sbin/ip utility to get the IP address associated with the interface
+#  on the local host and then maps the address to that interface.
+#  returns the interface name or 0 if failure.
+#==================================================================================
+#
+    my $iface    = 0;
+    my $address  = shift || return 'lo';
+
+    return 0 unless -e '/sbin/ip';
+
+    #  Use the /sbin/ip utility to get the IP address associated with the interface
+    #  on the local host. Just like stated above.
+    #
+    my $iaddress = `/sbin/ip route get $address | grep -oP 'src \\K\\S+'`; chomp $iaddress;
+
+    return 0 unless $iaddress;
+
+    #  Now collect the network interfaces available on the local system
+    #
+    my %ifaces = &SystemIfaceInfo();
+
+
+    #  Finally, loop through the devices until there is a match
+    #
+    foreach (keys %ifaces) { $iface = $_ if $iaddress eq $ifaces{$_}{ADDR}; }
+
+
+return $iface;
+} #  Address2Iface
+
+
+sub TestHostPasswdlessSSH {
+#===============================================================================
+#  Use the &TestHostPasswdlessSSH routine to test whether passwordless SSH can be used 
+#  to log into the targeted host.  This routine returns a value of 0 if no problems
+#  occurred or a message hopefully indicating why the test failed.
+#===============================================================================
+#
+    my $host = shift || return 'Missing hostname in argument passed to TestHostPasswdlessSSH';
+
+    return "Passwordless SSH Connection error to $host - $!" if &TestPasswordlessSSH($host);
+
+return 0;
+}
+
+
+sub TestPasswordlessSSH {
+#==================================================================================
+#  This is just a wrapper around &TestPasswordlessSSH_Outgoing for legacy
+#  reasons.
+#==================================================================================
+#
+
+return &TestPasswordlessSSH_Outgoing(shift);
+}  
+
+
+sub TestPasswordlessSSH_Outgoing {
+#==================================================================================
+#  &TestPasswordlessSSH_Outgoing checks whether passwordless SSH is working 
+#  between the localhost and a remote system ($host).
+#
+#  A return value of 0 indicates success; an error message will be returned.
+#  Note that from the command line ssh does not provide a description of the
+#  problem via $! but one magically appears from this routine.  Also, a
+#  "No route to host" error may mean "permission denied" or password needed.
+#==================================================================================
+#
+
+
+    my $host = shift || return 'Missing hostname in &TestPasswordlessSSH_Outgoing';
+
+return &SysExecute("ssh -q -o BatchMode=yes $host exit > /dev/null 2>&1") ? $! : 0;
+}  
+
+
+sub TestHostAvailability {
+#===============================================================================
+#  A simple interface to the &TestPingHost routine
+#===============================================================================
+#
+    my $host  = shift;
+
+return &TestPingHost($host) ? 0 : "TCP ping to $host - Failed (System not reachable)";
+}
+
+
+sub TestLocalHostname {
+#===============================================================================
+#  Simple routine to determine whether the hostname passed is that of the
+#  local host or one of it's aliases.  For this test the $host hostname 
+#  will be compared to the hostnames in the %hostinfo hash.
+#===============================================================================
+#
+    my %hostinfo = &SystemAddressInfo();
+
+    for (shift) {
+        return 1 if $_ eq 'local';
+        return 1 if $_ eq 'localhost';
+        return 1 if $_ eq $hostinfo{hostname0};
+        return 1 if $_ eq $hostinfo{hostname1};
+        return 1 if $_ eq $hostinfo{shost};
+    }
+
+return 0;
+}
+
+
+sub SysExecute {
+#=================================================================================
+#  This routine uses the Perl "exec" routine to run the passed command and 
+#  then interpret and return the exit status.
+#=================================================================================
+#
+    $ENV{EMSERR} = 0;
+
+    #  Override interrupt handler - Use the local one since some of the local
+    #  environment variables are needed for clean-up after the interrupt.
+    #
+    $SIG{INT} = \&SysIntHandle;  $|=1;
+
+    my ($prog, $log) = @_;
+
+    my $cmd = $log ? "$prog > $log 2>&1" : $prog;
+
+    my $pid = fork;
+
+    exec $cmd unless $pid; 
+
+    #  The $rc = $? >> 8 is needed for waitpid
+    #
+    my $we = waitpid($pid,0); my $rc = $? >> 8; $we = 0 if $we == $pid; 
+
+       $rc = 256 if $we and ! $rc;
+       $rc = 2 if $ENV{EMSERR} == 2;
+       
+return $rc;
+} #  SysExecute
+
+
+
+sub SysIntHandle {
+#===============================================================================
+#  A local version of &Ecore::SysIntHandle to avoid importing a bunch of 
+#  additional system modules. Does nothing but exit and that's good enough.
+#===============================================================================
+#
+
+CORE::exit 2
+} #  SysIntHandle
+
+

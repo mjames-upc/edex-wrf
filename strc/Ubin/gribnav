@@ -1,0 +1,479 @@
+#!/usr/bin/perl 
+#===============================================================================
+#
+#         FILE:  gribnav
+#
+#  DESCRIPTION:  The gribnav prints out the grid navigation of a GRIB file.
+#
+#       AUTHOR:  Robert Rozumalski - NWS
+#      VERSION:  18.3.1
+#      CREATED:  08 March 2018
+#===============================================================================
+#
+use warnings;
+use strict;
+require 5.008;
+use English;
+
+use Cwd 'abs_path';
+use FindBin qw($RealBin);
+use lib (abs_path("$RealBin/../Uutils"));
+
+use vars qw (%GribNav);
+
+use Eenv;
+
+#===============================================================================
+#   So gribnav begins.  Note that while the %GRIBinfo hash is passed into
+#   the individual modules, it is global within a module. Any variables that
+#   are required later on will be carried in this hash.
+#===============================================================================
+#
+
+    #  Override interrupt handler - Use the local one since some of the local
+    #  environment variables are needed for clean-up after the interrupt.
+    #
+    $SIG{INT} = \&Ecore::SysIntHandle;
+
+    #  Make sure the UEMS environment is set
+    #
+    &Ecore::SysExit(-1,$0) if &Eenv::SetEnvironment($ENV{UEMS});
+
+    &Ecore::SysExit(1,$0)  if &GribNav_ReturnHandler(&GribNav_Start());
+
+    &Ecore::SysExit(1,$0)  if &GribNav_ReturnHandler(&GribNav_Process());
+
+
+&Ecore::SysExit(0,$0);
+
+
+sub GribNav_Start {
+#=====================================================================================
+#  This subroutine calls routines that perform the initial configuration for
+#  GRIBnav prior to any real work being done. The responsibility of this 
+#  section is to:
+#
+#      1. Initialize the %GribNav hash
+#      2. Read and parse the user input options
+#
+#  Note that the handling of the return is different here than with the other
+#  routines as a return of the %GribNav hash indicates success when an empty
+#  hash means failure.
+#=====================================================================================
+#
+    return 11 unless %GribNav = &GribNav_Initialize(\%GribNav);
+
+    return 12 unless %GribNav = &GribNav_GetOptions(\%GribNav);
+
+return 0;
+}
+
+
+sub GribNav_Process {
+#===============================================================================
+#  This routine loops through the list of grib files passed to gribnav, calling the
+#  &Others::SystemInformationHost routine, which collect the requested information
+#  (via uemsinfo) and then prints it out to the screen.
+#===============================================================================
+#
+    my %gribfiles = ();
+    my $wgrib2    = $GribNav{WGRIB2};
+
+
+    #-----------------------------------------------------------------------------------
+    #  Begin by making sure the list of grib files is viable.
+    #-----------------------------------------------------------------------------------
+    #
+    foreach (@{$GribNav{GRIBS}}) {
+        if (&Others::FileExists($_))          {&Ecomm::PrintTerminal(6,6,88,0,1,"This ones on YOU - GRIB file \"$_\" does not exist"); next;}
+        my $type = &Others::FileType($_);
+        if ($type !~ /grib/i) {&Ecomm::PrintTerminal(6,6,88,0,1,"Maybe you missed it - \"$_\" is not a GRIB file"); next;}
+        $gribfiles{$_} = $type;
+    } 
+
+    unless (%gribfiles) {
+        my $mesg = "Maybe you slept through \"UEMS assimilation Sunday\", but you must include at least one valid ".
+                   "GRIB file as an argument to $GribNav{EXE}. I know you are new at this, so I can forgive you, ".
+                   "but do not test my patience.\n\n".
+                   "You know, it would be a shame if something were to happen to your next simulation.";
+        &Ecomm::PrintTerminal(6,6,94,1,1,$mesg);
+        return 21;
+    }
+
+
+    unless ($wgrib2) {
+        my $mesg = "Unfortunately, I am unable to locate the UEMS version of the \"wgrib2\" utility, which should ".
+                   "be located in the $ENV{EMS_UBIN} directory. Until you figure out what happened to it, we can ".
+                   "not function as a team";
+        &Ecomm::PrintTerminal(6,6,94,1,1,$mesg);
+        return 21;
+    }
+
+
+    #-----------------------------------------------------------------------------------
+    #  Collect the navigation information from the grib file using wgrib2
+    #-----------------------------------------------------------------------------------
+    #
+    my %gproj = ();  #  The hash that stores the projection information
+
+    foreach my $gfile (keys %gribfiles) {
+
+        $gproj{filename} = &Others::popit($gfile);
+        $gproj{format}   = ($gribfiles{$gfile} =~ /grib1/i) ? 'GRIB 1' : 'GRIB 2';
+
+        #  Start by getting the GRIB ID information
+        #
+        foreach (`$wgrib2 -d 1 -emsid $gfile`) {
+            chomp;  s/\s//g;
+            next unless /MDLID|OCNTR|SCNTR/i;
+            my @l = split /:/,$_,2;
+            $gproj{uc $l[0]} = $l[1];
+        }
+
+        my @projinfo = `$wgrib2 -d 1 -gridems $gfile`; chomp $_ foreach @projinfo;
+
+        unless (grep /projection/i, @projinfo) {
+            &Ecomm::PrintTerminal(6,4,144,2,2,"Call Robert immediatly and tell him that this grid is not supported by gribnav!");
+            return 22;
+        }
+
+        foreach (@projinfo) {
+
+            if (/projection/i) {
+                my @p = split /:/,$_,2;
+                unless ($p[1] =~ /lambert|mercator|latlon|polar/i) {
+                    &Ecomm::PrintTerminal(6,4,144,2,2,"Major Bummer: The $p[1] projection is currently not supported in gribnav.");
+                    return 23;
+                }
+            }
+
+            s/\s//g;
+            next unless $_;
+            my @l = split /:/,$_,2;
+            $gproj{uc $l[0]} = $l[1];
+
+        }
+
+
+        #-----------------------------------------------------------------------------------
+        #  Complete the population of the %gproj hash with important stuff
+        #-----------------------------------------------------------------------------------
+        #
+        $gproj{POLE} = 'NA' unless defined $gproj{POLE};
+        $gproj{POLE} = $gproj{POLE} =~ /north/i ? 'North Pole' : $gproj{POLE} =~ /south/i ? 'South Pole' : 'NA';
+        $gproj{SCAN} =~ s/\)//g;
+
+        $gproj{DX} = (int $gproj{DX})*0.001 if defined $gproj{PROJECTION} and $gproj{PROJECTION} !~ /latlon|araka/i;
+        $gproj{DY} = (int $gproj{DY})*0.001 if defined $gproj{PROJECTION} and $gproj{PROJECTION} !~ /latlon|araka/i;
+    
+    
+        #  If necessary, we need to convert from 0-360 to +-180 degrees
+        #
+        $gproj{LON1}   = $gproj{LON1}   - 360.0 if defined $gproj{LON1} and $gproj{LON1} > 180.;
+        $gproj{LON2}   = $gproj{LON2}   - 360.0 if defined $gproj{LON2} and $gproj{LON2} > 180.;
+        $gproj{LOV}    = $gproj{LOV}    - 360.0 if defined $gproj{LOV}  and $gproj{LOV}  > 180.;
+        $gproj{ORIENT} = $gproj{ORIENT} - 360.0 if defined $gproj{ORIENT} and $gproj{ORIENT} > 180.;
+
+        #$gproj{LON1}   = $gproj{LON1} - 360.0 if defined $gproj{LON1};
+        #$gproj{LON2}   = $gproj{LON2} - 360.0 if defined $gproj{LON2};
+        #$gproj{LOV}    = $gproj{LOV}  - 360.0 if defined $gproj{LOV};
+        #$gproj{ORIENT} = $gproj{ORIENT} - 360.0 if defined $gproj{ORIENT};
+
+        #  Get the corner points from the grib files using wgrib2. Can not do this with wgrib.
+        #
+
+        #  Other problems exist in that wgrib2 currently segfaults when attempting to extract lat/lon
+        #  information Mercator grids.
+        #
+        my %pts;
+        @{$pts{sw}} = (1,1);
+        @{$pts{nw}} = (1,$gproj{NY});
+        @{$pts{se}} = ($gproj{NX},1);
+        @{$pts{ne}} = ($gproj{NX},$gproj{NY});
+        @{$pts{cp}} = ($gproj{NX}/2,$gproj{NY}/2);
+
+
+        if ($gproj{PROJECTION} =~ /mercator/i) {
+
+            # Flip NX and/or NY depending upon scan mode
+            #
+            #  Necessary since wgrib2 segmentation faults when passing -ijlatems flag
+            #  with Mercator grids
+            #
+            my ($xs,$ys)  = split /:/ => $gproj{SCAN};
+            my $snx = $xs =~ /we/i ? $gproj{NX} : -1 * $gproj{NX};
+            my $sny = $ys =~ /sn/i ? $gproj{NY} : -1 * $gproj{NY};
+
+
+            my $dlat   = $gproj{LAT2} - $gproj{LAT1}; $dlat = $dlat/2.;
+            my $dlon   = $gproj{LON2} - $gproj{LON1}; $dlon = $dlon/2.;
+
+            my $cplat = $gproj{LAT1} + $dlat;
+            my $cplon = $gproj{LON1} + $dlon;
+
+            @{$gproj{sw}} = ($gproj{LAT1},$gproj{LON1});
+            @{$gproj{nw}} = ($gproj{LAT2},$gproj{LON1});
+            @{$gproj{se}} = ($gproj{LAT1},$gproj{LON2});
+            @{$gproj{ne}} = ($gproj{LAT2},$gproj{LON2});
+            @{$gproj{cp}} = ($cplat,$cplon);
+
+        } else {
+    
+            foreach my $pt (keys %pts) {
+                (my $i, my $j) = @{$pts{$pt}};
+                foreach (`$wgrib2 -d 1 -ijlatems $i $j $gfile`) {
+                    chomp;
+                    next unless s/Lat,Lon//i;
+                    s/\://g; s/\s//g;
+                    ($i, $j) = split /,/,$_,2;
+                }
+                $j = $j - 360.0 if $j > 180.;
+                #$j = $j - 360.0;  # 7/2013 Changed as all GRIB 2 longitude values are 0-360
+                @{$gproj{$pt}} = ($i, $j);
+            }
+        }
+
+        &GribNav_PrintNavigation(\%gproj);
+
+    }
+
+return 0;
+}
+
+
+sub GribNav_ReturnHandler {
+#=====================================================================================
+#  The purpose of this routine is to interpret the return codes from the various
+#  gribnav subroutines. The value that is returned identifies the routine from
+#  which it was passed and any specific error, where the 10's digit identifies
+#  the routine and the 1s is the error. Some routines may provide more error
+#  information than others.
+#
+#  The routine itself returns 0 (gribnav carries on) for success or 1 (gribnav
+#  terminates) for failure.
+#=====================================================================================
+#
+    my $rc = shift; 
+
+    #  Return codes 11 - 19 are reserved for the GribNav_Start Module
+    #
+    if ($rc == 11) {&Ecomm::PrintMessage(6,6,96,1,2,"Apparently, gribnav is upset with you at the moment.");}
+
+    #  Return codes 20+ are reserved for the GribNav_Process Module
+    #
+    if ($rc  > 19) {&Ecomm::PrintMessage(0,6,96,1,2,'Well, your glass was half full - until you turned it upside down!');}
+
+return $rc ? 1 : 0;
+}
+
+
+sub GribNav_Initialize {
+#===============================================================================
+#  Initialize the common hashes and variables used by gribnav
+#===============================================================================
+#
+    my $upref   = shift;
+    my %GribNav = %{$upref};
+
+    unless (defined $ENV{UEMS} and $ENV{UEMS} and -e $ENV{UEMS}) {
+        print '\n\n    !  The UEMS environment is not properly set - EXIT\n\n';
+        return ();
+    }
+
+    my $DATE               = gmtime; chomp $DATE; $DATE = "$DATE UTC";
+    my $EXE                = &Others::popit($0); $EXE =~ s/^\./\//g;
+
+    #  ----------------------------------------------------------------------------------
+    #  Set default language to English because the UEMS attempts to match English
+    #  words when attempting to get system information.
+    #  ----------------------------------------------------------------------------------
+    #
+    $ENV{LC_ALL}           = 'C';
+
+
+    $ENV{EMSEXE}           = $EXE;
+
+    $GribNav{DATE}         = $DATE;        #  The current system date and time
+    $GribNav{EXE}          = $ENV{EMSEXE}; #  The name of GribNav, just in case its changed
+
+    #----------------------------------------------------------------------------------
+    #  Assign the location of the routines used by GribNav.  No error for missing 
+    #  binary yet because the GRIB version is not known.
+    #----------------------------------------------------------------------------------
+    #
+    $GribNav{WGRIB2}       = -x "$ENV{EMS_UBIN}/wgrib2"  ? "$ENV{EMS_UBIN}/wgrib2"  : '';
+    $GribNav{WGRIB}        = -x "$ENV{EMS_UBIN}/wgrib"   ? "$ENV{EMS_UBIN}/wgrib"   : '';
+    $GribNav{CNVGRIB}      = -x "$ENV{EMS_UBIN}/cnvgrib" ? "$ENV{EMS_UBIN}/cnvgrib" : '';
+
+    $GribNav{UEMSVER}      = &Elove::GetUEMSrelease($ENV{UEMS});
+    %{$GribNav{localhost}} = &Others::SystemAddressInfo();
+
+    &Elove::Greeting($GribNav{EXE},$GribNav{UEMSVER},$GribNav{localhost}{shost});
+
+
+return %GribNav;
+}
+
+
+sub GribNav_GetOptions {
+#===============================================================================
+#  The GribNav_GetOptions routine parses the flags and options passed
+#  from the command line. Simple enough.
+#===============================================================================
+#
+use Getopt::Long qw(:config pass_through);
+
+    my $upref   = shift;
+    my %GribNav = %{$upref};
+
+    @{$GribNav{GRIBS}} = ();
+
+    GetOptions ( "h|help|?"       => sub {&GribNav_HelpMe}   #  Just what the doctor ordered
+               );
+
+    @{$GribNav{GRIBS}} = @ARGV  ? @ARGV : ();   # All that should be here are grib file names
+    @{$GribNav{GRIBS}} = &Others::rmdups(@{$GribNav{GRIBS}});
+
+
+    unless (@{$GribNav{GRIBS}}) {
+        my $mesg = "Maybe you slept through \"UEMS assimilation Sunday\", but you must include at least one valid ".
+                   "GRIB file as an argument to $GribNav{EXE}. I know you are new at this, so I can forgive you, ".
+                   "but do not test my patience.\n\n".
+                   "You know, it would be a shame if something were to happen to your next simulation.";
+        &Ecomm::PrintTerminal(6,4,94,1,2,$mesg);
+    }
+
+
+
+return @{$GribNav{GRIBS}} ? %GribNav : ();
+}
+
+
+sub GribNav_RoutineGuidance  {
+#=====================================================================================
+#  A subroutine that provides love & guidance for the user.
+#=====================================================================================
+#
+    my $mesg  = qw{};
+    my @helps = ();
+
+    my $exe   = 'gribnav'; my $uce = uc $exe;
+
+    push @helps => &Ecomm::TextFormat(0,0,114,0,1,"RUDIMENTARY GUIDANCE FOR $uce (Because you need it)");
+
+    $mesg = "The primary purpose of the gribnav routine is to read the navigation information within a ".
+            "GRIB file and write the information out in an easy to read format.  This includes a ".
+            "depiction of the corner and center points along with the other navigation information.";
+
+    push @helps => &Ecomm::TextFormat(2,2,90,1,1,$mesg);
+
+    push @helps => &Ecomm::TextFormat(0,0,114,2,1,"$uce USAGE:");
+    push @helps => &Ecomm::TextFormat(4,0,144,1,1,"% $exe  <GRIB File>");
+
+    push @helps => &Ecomm::TextFormat(0,0,114,2,2,"FOR ADDITIONAL HELP, LOVE AND UNDERSTANDING:");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,1,"a. Read  - docs/uems/uemsguide  (just pick a chapter, any chapter)");
+    push @helps => &Ecomm::TextFormat(2,0,114,0,1,"Or");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,1,"b. http://strc.comet.ucar.edu/software/uems");
+    push @helps => &Ecomm::TextFormat(2,0,114,0,1,"Or");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,2,"c. % $exe --help  For this menu again, just in case you missed it the first time");
+
+    my $help = join '' => @helps;
+
+return $help;
+}
+
+
+sub GribNav_DefineOptions {
+#=====================================================================================
+#  This routine defined the list of options that can be passed to the program
+#  and returns them as a hash.
+#=====================================================================================
+#
+    my %opts = (
+                '--help'       => { arg => ''   , help => '&GribNavHelp_info'      , desc => 'Provide some information about gribnav'} 
+                );
+
+return %opts;
+}
+
+
+sub GribNav_HelpMe {
+#===============================================================================
+#  The GribNav_HelpMe routine determines what to do when the --help flag is
+#  passed with or without an argument. 
+#===============================================================================
+#
+    &Ecomm::PrintTerminal(0,7,255,1,1,&GribNav_RoutineGuidance);
+
+&Ecore::SysExit(-4); 
+}
+
+
+sub GribNav_PrintNavigation {
+#===============================================================================
+#  This routine simply formats the navigation information collected by getnav
+#  and returns the array of formatted lines.
+#===============================================================================
+#
+    my $upref   = shift;
+    my %gproj = %{$upref};
+
+
+#   foreach my $key (keys %gproj) {print "$key = $gproj{$key}\n";}
+
+    my $n=0;
+    my $deg=0;
+    my @lines=();
+
+    $lines[$n++] = sprintf ("File Name                :  $gproj{filename}");
+    $lines[$n++] = sprintf ("File Format              :  $gproj{format}");
+    $lines[$n++] = sprintf ("Model ID                 :  $gproj{MDLID}");
+    $lines[$n++] = sprintf ("Center ID                :  $gproj{OCNTR}");
+    $lines[$n++] = sprintf ("Sub Center ID            :  $gproj{SCNTR}\n");
+
+    my $tp = 'Unknown';
+    for ($gproj{PROJECTION}) {
+        if (/lambert/i) {$tp = 'Lambert Conformal';}
+        if (/arakawa/i) {$deg=1;$tp = 'Semi-staggered Arakawa E-Grid (2D)';}
+        if (/latlon/i)  {$deg=1;$tp = 'Latitude-Longitude';}
+        if (/mercato/i) {$tp = 'Mercator';}
+        if (/polar/i)   {my $p = ($gproj{POLE} =~ /north/i) ? 'North' : 'South'; $tp = "$p Polar Stereographic";}
+    }
+    $gproj{PROJECTION} = $tp;
+
+    $lines[$n++] = sprintf ("Grid Projection          :  $gproj{PROJECTION}\n");
+    $lines[$n++] = sprintf ("Grid Dimensions  NX x NY :  %s x %s",$gproj{NX},$gproj{NY});
+    $lines[$n++] = sprintf ("Grid Spacing      DX, DY :  %-3.3fkm, %-3.3fkm",$gproj{DX},$gproj{DY}) unless $deg;
+    $lines[$n++] = sprintf ("Grid Spacing      DX, DY :  %-3.3fdeg, %-3.3fdeg",$gproj{DX},$gproj{DY}) if $deg;
+    $lines[$n++] = sprintf ("Standard Latitude        :  %-4.3f",$gproj{LATD}) if defined $gproj{LATD};
+    $lines[$n++] = sprintf ("Standard Longitude       :  %-4.3f",$gproj{LOV})  if defined $gproj{LOV};
+    $lines[$n++] = sprintf ("Orientation Longitude    :  %-4.3f",$gproj{ORIENT}) if defined $gproj{ORIENT};
+    $lines[$n++] = sprintf ("Latitude, Longitude (1,1):  %-4.3f,  %-4.3f",$gproj{LAT1},$gproj{LON1}) if $gproj{LAT1} and $gproj{LON1};
+    $lines[$n++] = sprintf ("True Lat1, Lat2          :  %-4.3f,  %-4.3f",$gproj{LATIN1},$gproj{LATIN2}) if $gproj{LATIN1} and $gproj{LATIN2};
+    $lines[$n++] = sprintf ("True Latitude            :  %-4.3f",$gproj{LATIN1}) if $gproj{LATIN1} and !$gproj{LATIN2};
+    $lines[$n++] = sprintf ("Pole                     :  %s",$gproj{POLE}) unless $gproj{POLE} eq 'NA';
+    $lines[$n++] = sprintf ("South Pole Latitude      :  %-4.3f",$gproj{LATSP}) if $gproj{POLE} =~ /south/i and $gproj{LATSP};
+    $lines[$n++] = sprintf ("South Pole Longitude     :  %-4.3f",$gproj{LONSP}) if $gproj{POLE} =~ /south/i and $gproj{LONSP};
+    $lines[$n++] = sprintf ("Pole Point          I, J :  %-4.3f,  %-4.3f",$gproj{polei},$gproj{polej}) if $gproj{polei} and $gproj{polej};
+    $lines[$n++] = sprintf ("Winds                    :  %s",$gproj{WINDS}) if $gproj{WINDS};
+    $lines[$n++] = sprintf ("Scan                     :  %s",$gproj{SCAN}) if $gproj{SCAN};
+
+    my @dpts = ($gproj{sw}[0], $gproj{sw}[1], $gproj{nw}[0], $gproj{nw}[1], $gproj{se}[0],
+                $gproj{se}[1], $gproj{ne}[0], $gproj{ne}[1], $gproj{cp}[0], $gproj{cp}[1]);
+
+    $lines[$#lines+2] = &Others::FormatCornerPoints(@dpts);
+
+#   Add this code later
+#
+#   foreach my $ll (split /;|:/ => $lls) {
+#       my ($lat,$lon) = split /,/ => $ll;
+#       my ($i,$j) = &Emaproj::llij_lc($lat,$lon,%proj);
+#       $lines[$#lines+1] = sprintf ("Requested Lat, Lon : %6.2f, %6.2f  located at I,J  %-4.1f, %-4.1f",$lat,$lon,$i,$j);
+#   }
+
+    &Ecomm::PrintTerminal(0,6,96,1,0,$_) foreach @lines;
+    &Ecomm::PrintTerminal(0,6,96,2,0,' ') if @lines;
+
+return 0;
+}
+

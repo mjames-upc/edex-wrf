@@ -1,0 +1,123 @@
+#!/bin/bash
+
+# UEMS V18.3.1
+if [ -f /awips2/uems/etc/EMS.profile ]; then
+	. /awips2/uems/etc/EMS.profile
+fi
+
+top=$UEMS/rtmodel
+nx=101
+ny=155
+dx=6000
+dy=6000
+
+ymd=20180324
+cycle=00
+ymdh=$ymd$cycle
+
+run_name=${ymdh}_12km_co
+nmm=nmm_co
+domain=colorado
+
+cd $EMS_DATA/domains/$domain
+echo $EMS_RUN >! dataroot.txt
+
+# create wrfsi.nl file
+YYYY_START=`echo $YMDH | cut -c1-4`
+MONTH_START=`echo $YMDH | cut -c5,6`
+DAY_START=`echo $YMDH | cut -c7,8`
+HOUR_START=`echo $YMDH | cut -c9,10`
+
+ENDTIME=`datetime $FDATE 30 '%Y%m%d%H'`
+YYYY_STOP=`echo $ENDTIME | cut -c1-4`
+MONTH_STOP=`echo $ENDTIME | cut -c5,6`
+DAY_STOP=`echo $ENDTIME | cut -c7,8`
+HOUR_STOP=`echo $ENDTIME | cut -c9,10`
+
+DEFCLAT="40.035"
+DEFCLON="-105.2436"
+
+cat $WRF/upc/wrfsi.nl_12km | sed 's/@YYYY_START@/'${YYYY_START}'/g' | \
+   sed 's/@MONTH_START@/'${MONTH_START}'/g' | \
+   sed 's/@DAY_START@/'${DAY_START}'/g' | \
+   sed 's/@HOUR_START@/'${HOUR_START}'/g' | \
+   sed 's/@YYYY_STOP@/'${YYYY_STOP}'/g' | \
+   sed 's/@MONTH_STOP@/'${MONTH_STOP}'/g' | \
+   sed 's/@DAY_STOP@/'${DAY_STOP}'/g' | \
+   sed 's/@HOUR_STOP@/'${HOUR_STOP}'/g' | \
+   sed 's/@NX@/'${NX}'/g' | sed 's/@NY@/'${NY}'/g' | \
+   sed 's/@DX@/'${DX}'/g' | sed 's/@DY@/'${DY}'/g' | \
+   sed 's/@CLAT@/'${DEFCLAT}'/g' | \
+   sed 's/@CLON@/'${DEFCLON}'/g' >! wrfsi.nl 
+
+if ( ! -e $DATAROOT/${DOMAIN_NAME} ) mkdir $DATAROOT/${DOMAIN_NAME}
+cd $DATAROOT/${DOMAIN_NAME}
+
+# added -m flag to prevent gridgem_model.exe from recreating static file
+$WRF/etc/window_domain_rt.pl \
+	-w wrfsi.rotlat \
+	-s $DATA_SI \
+	-i $WRF \
+	-d $DATAROOT/${DOMAIN_NAME} \
+	-t $DATA_DOMS/colorado \
+	-m
+
+# now copy over static netCDF file
+cp -r $DATAROOT/colorado/static/static.wrfsi.rotlat $DATAROOT/${DOMAIN_NAME}/static/
+
+# calculate tiles to be used
+cd $TOP/g218tiles
+#TILES=`tile_calc $DEFCLAT $DEFCLON $NX $NY $DX $DY`
+TILES=`tile_calc $DEFCLAT $DEFCLON $NX $NY 8000 8000`
+echo "Running wrf_prep with $TILES"
+echo entering $DATAROOT/${DOMAIN_NAME}
+echo CYCLE is $CYCLE
+echo wrf_prep --sfcdset ssthr --dset gfsgrb2 --ftp ncep --cycle ${CYCLE}:0:30
+cd $DATAROOT/${DOMAIN_NAME}
+
+wrf_prep --sfcdset ssthr --dset gfsgrb2 --ftp ncep --cycle ${CYCLE}:0:30
+set STATUS_PREP=$status
+if ( $STATUS_PREP == 0 ) then
+   # copy the ssthr data set
+   SSTHR=rtgssthr_grb_0.083
+   SAVDIR=$UEMS/data/grib/ssthr
+   if ( ! -e $SAVDIR ) mkdir -p $SAVDIR
+   if ( -e grib/${SSTHR} ) then
+      if ( -e ${SAVDIR}/${SSTHR} ) then
+         cmp -s grib/${SSTHR} ${SAVDIR}/${SSTHR}
+         set ISDIF=$status
+         if ( $ISDIF != 0 ) cp -p grib/${SSTHR} ${SAVDIR}/${SSTHR}
+      else
+         cp -p grib/${SSTHR} ${SAVDIR}/${SSTHR}
+      endif
+   endif
+else
+   sleep 300
+endif
+
+
+set NOTDONE=0
+set RETRY=0
+while ( ( $NOTDONE == 0 ) && ( $RETRY < 2 ) )
+   wrf_run --verbose
+   set STATUS=$status
+   if ( $STATUS != 0 ) then
+      echo "wrf run ${DOMAIN_NAME} failed" | mail -s "wrf run error" mjames@unidata.ucar.edu
+      wrf_clean --level 2
+      @ RETRY = $RETRY + 1
+   else
+      set NOTDONE=1
+   endif
+end
+
+if ( $NOTDONE == 0 ) then
+   echo "**********************************************"
+   echo "wrf run ${DOMAIN_NAME} didn't run retry $RETRY" 
+   echo "**********************************************"
+   exit -1
+endif
+
+wrf_post --grib --DM
+
+if ( ! -d $WRF/logs/runs ) mkdir $WRF/logs/runs
+mv log $WRF/logs/runs/${YMDH}_${GEMNMM}

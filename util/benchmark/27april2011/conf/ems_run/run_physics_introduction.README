@@ -1,0 +1,99 @@
+# ==============================================================================================
+#  WHAT TO DO WITH THE WRF PHYSICS CONFIGURATION FILES 
+# ==============================================================================================
+#
+# SO WHAT DO THESE CONFIGURATION FILES DO FOR ME?
+#
+#   The run_physics_<physics scheme>.conf files contain the physics configuration settings 
+#   for running the WRF ARW core within the UEMS. The default configuration contained in
+#   these files should work for most simulations, so if this is your first time driving the
+#   UEMS it is recommended that you stick with what works, i.e., the defaults, rather than
+#   making changes that might lead to something terrible happening, such as spontaneous 
+#   combustion.
+#
+#     And we don't want that to happen now, do we?
+#
+#   Since the UEMS oligarchs always advocate for the practice of safe modeling, internal
+#   consistency checks have been added to the code to (mostly) insure that the selected
+#   options work and play well together. Sometimes the UEMS knows what is good for you,
+#   whether you like it or not.
+#
+#
+# IMPORTANT USER INFORMATION - Read on if you dare
+#
+#   It is important to distinguish between the domains initialized for your simulation
+#   and those that were created, or localized, when you defined your domains with the
+#   Domain Wizard or some other utility. The LOCALIZED domains, as depicted in the
+#   projection.jpg image (static/projection.jpg), are identified as domains 1,2,...,N,
+#   where domain 1 is ALWAYS the primary domain and 2 through N are nested or child
+#   domains. Each nested domain has a parent, which could be the primary domain (1) or
+#   another nest in the case of multiple levels.
+
+#   Parameter configuration descriptions containing "NESTED" allow for the inclusion
+#   of separate values for each LOCALIZED DOMAIN.
+#
+#   For Example:
+#
+#     SOME_PARM = Primary Domain, domain 2, domain 3, ..., domain N
+#
+#   The first value specified in the list will be applied to the primary domain with
+#   each successive value assigned to the corresponding sub domain. All entries must
+#   be separated by a comma (,). For example, let's say that you created and localized
+#   file domains with Domain Wizard.  You could specify a different configuration
+#   option for each domain (Don't try this at home - See potential fire hazard above):
+#
+#     SOME_PARM = 5, 4, 3, 2, 1, 0
+#
+#   If you include all five domains in your simulation, then the primary domain will
+#   get a value of 5, domain two will get a value of 4, and finally domain five will
+#   get assigned a value of 1.  The "0" at the end of the list will be ignored since
+#   there are six values and only five domains.
+#
+#   Now, even though you localized five domains with Domain Wizard and then initialized
+#   your simulation with ems_prep with all five, you don't need to include all of them
+#   in your actual simulation.  You may specify a subset of the initialized domains
+#   by passing the "--domains" flag  to ems_run:
+#
+#       %  ems_run --domains 4
+#
+#   Which tells ems_run you want to include domain 4 in addition to the primary domain
+#   (Domain 1 is always included). If domain 4 is the child of the primary domain, then
+#   it will still be assigned option "2" because that is the fourth value listed for the
+#   SOME_PARM parameter above.
+#
+#   If domain 4 is actually a child of a sub-domain not included as an argument to
+#   "--domains", the parent of domain 4 will automatically be included and you will
+#   like it.  If domain 4 was the child of domain 2 (which was the child of domain 1),
+#   then domain 2 would be assigned SOME_PARM = 4.
+#
+#   In the event that you fail to specify a parameter value for a domain included in
+#   your simulation, it will automatically be assigned  the value of its parent. So,
+#   if the parameter configuration in this file looks like:
+#
+#     SOME_PARM = 5, 4, 3
+#
+#   And you include domain 4, which is the child of the primary domain, then domain 4
+#   will be assigned the same value as the primary domain (option 5).  If domain 4 is
+#   the child of domain 2 then it will be assigned a value of 4.
+#
+#   In most cases, you are best off assigning a single value, and thus physics setting,
+#   to all domains included in your simulation. So doing something like:
+#
+#     SOME_PARM = 3, 3, 3, ..., 3
+#
+#   Is the same as setting a single value for domain 1
+#
+#     SOME_PARM = 3 (The UEMS will use "3" for each domain, just because "3 is a magic
+#                    number",  as I learned from "School House Rock")
+#
+#  FINALLY! - Because it is generally not good modeling practice to mix different
+#             physics schemes in a simulation. Many of the normally "NESTED" fields
+#             are limited to a single choice that will be used for ALL domains in
+#             your simulation. This step reduces the chance for failure, and
+#             consequently, complete humiliation of the user.
+#
+#  LOG:  R.Rozumalski - NWS September 2016
+#
+# ==============================================================================================
+# NOTHING ELSE TO SEE IN HERE - AND THANK YOU FOR READING ALL THE WAY TO THE BOTTOM
+# ==============================================================================================

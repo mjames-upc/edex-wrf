@@ -1,0 +1,136 @@
+#%Module######################################################################
+#
+#  This module file is used to define the NAWIPS environment used with the
+#  Unified Environmental Modeling System (UEMS) on the Weather and Climate 
+#  Operational Supercomputing System (WCOSS).
+#
+#  Author:  Robert Rozumalski - NWS/OCLO/FDTD
+##############################################################################
+#
+
+proc ModulesHelp { } {
+   puts "Sets the working environment for NAWIPS with the Unified Environmental"
+   puts "Modeling System (UEMS) on WCOSS. It's fun, try it. All the cool modelers"
+   puts "would be doing it, if there were any. You can be the first!"
+}
+
+module-whatis   "Sets the NAWIPS working environment for the UEMS on WCOSS"
+
+
+#  Specify the location of the METDAT directory
+#
+if { ! [info exists ::env(METDAT) ] }    {setenv METDAT $env(HOME)/metdat/gempak}
+if { ! [file isdirectory $env(METDAT)] } {file mkdir $env(METDAT)}
+
+
+#  Garp stuff - not sure if it is even needed
+#
+setenv GARPHOME  $env(NAWIPS)/comet/garp
+setenv GARP_PATH $env(GARPHOME)/config
+
+
+# GEMPAK directory:
+#
+setenv GEMPAK     $env(NAWIPS)/gempak
+setenv GEMPAKHOME $env(NAWIPS)/gempak
+
+ 
+# CONFIGURATION directory
+#
+setenv CONFIGDIR $env(NAWIPS)/config
+
+ 
+# System environmental variables
+#
+setenv NA_OS     linux
+
+setenv OS_ROOT   $env(NAWIPS)/os/$env(NA_OS)
+setenv OS_BIN    $env(OS_ROOT)/bin
+setenv OS_INC    $env(OS_ROOT)/include
+setenv OS_LIB    $env(OS_ROOT)/lib
+
+
+# Directory for storing object libraries (GEMPAK + related software):
+#
+setenv GEMLIB    $env(OS_LIB)
+
+ 
+# Directory for executables (GEMPAK + related software):
+#
+setenv GEMEXE    $env(OS_BIN)
+
+
+# Remaining directories used by GEMPAK  (leave as is):
+#
+setenv GEMPDF    $env(GEMPAK)/pdf
+setenv GEMTBL    $env(GEMPAK)/tables
+setenv GEMERR    $env(GEMPAK)/error
+setenv GEMHLP    $env(GEMPAK)/help
+setenv GEMMAPS   $env(GEMPAK)/maps
+setenv GEMNTS    $env(GEMPAK)/nts
+setenv GEMPARM   $env(GEMPAK)/parm
+setenv GEMPTXT   $env(GEMPAK)/txt/programs
+setenv GEMGTXT   $env(GEMPAK)/txt/gemlib
+setenv NMAP_RESTORE  $env(GEMNTS)/nmap/restore
+
+
+#  MEL_BUFR environment
+#
+setenv MEL_BUFR             $env(NAWIPS)/extlibs/melBUFR/melbufr
+setenv MEL_BUFR_TABLES      $env(GEMPAK)/tables/melbufr
+
+
+#  Add NAWIPS to the X applications resource path.
+#
+set xresources ""
+set xnawipsdir $env(NAWIPS)/resource
+
+if { [file isdirectory $xnawipsdir] } {
+    set xresources "$xnawipsdir/%N"
+    if { [info exists env(XUSERFILESEARCHPATH)] } {
+        prepend-path  XUSERFILESEARCHPATH $xresources
+    } else {
+        setenv XUSERFILESEARCHPATH ${xresources}
+    }
+}
+
+
+#  Make sure the paths are correctly set
+#
+append-path   PATH   $env(OS_BIN)
+append-path   PATH   $env(NAWIPS)/bin
+
+
+# Data directories - some of which are not used
+#
+setenv GEMDATA       $env(METDAT)
+
+setenv OBS           $env(GEMDATA)/obs
+ 
+# Location of meta files (generated with NC decide driver)
+#
+setenv NTRANS_META   $env(GEMDATA)/meta
+
+ 
+#  Location of SAT directory tree "Required!!"...must exist
+#
+setenv SAT       $env(GEMDATA)/images/sat
+setenv RAD       $env(GEMDATA)/nexrad
+setenv MODEL     $env(GEMDATA)/model
+
+
+#  Make sure the metdat subdirectories have been created
+#
+foreach gemvar {GEMDATA OBS SAT RAD MODEL} {
+    if { ! [file isdirectory $env($gemvar)] } {file mkdir $env($gemvar)}
+}
+
+
+#  Make sure the paths are correctly set
+#
+append-path   PATH   $env(OS_BIN)
+append-path   PATH   $env(NAWIPS)/bin
+
+
+setenv OS $env(NA_OS)
+

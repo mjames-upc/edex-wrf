@@ -1,0 +1,363 @@
+    KGTYPE******I5*******:(00255)********START OF THIS OUTPUT GRID******
+    IMDLTY     *I5*      :(MDLID)
+    ICNTRO     *I5*      :(OCNTR)
+    ICNTRS     *I5*      :(SCNTR)
+    DATSET     *A6*      :(EMSPRS)
+
+#  ===============================================================================================
+#  This control file is intended for use with the EMS Auxilary output files (auxhist1) Only!
+#
+#  The information contained in this file is for use with the EMS version of the universal
+#  post processor (EMSUPP) and will not work with the DTC version of the UPP. Additionally,
+#  your pre- EMS V3.7.1.X emsupp_cntrl.parm file will not work either, so do not try it.
+#
+#  That's just the way it is, only better.
+#
+#  Note #1 (of many) - The field descriptors, such as '(MAX_PWAT_ON_ENTIRE_ATMOS)', must exactly
+#  match those found in post_avblflds.xml for anything to work.
+#
+#  Max/Min/Ave Field Notice:  The period over which the Max/Min/Ave fields are valid is
+#  determined by the output frequency of the primary (wrfout) files.  If the HISTORY_INTERVAL
+#  value in run_wrfout.conf is 60 (minutes), then the period over which these fields are
+#  valid begins with the previous wrfout output time and not the last auxhist1 file dump.
+#
+#  A word about the scaling of data in the GRIB 2 files.  The scaling field, SCAL=(value), is
+#  functional in the EMSUPP, and is used to assign the number of bits used for packing of data
+#  into the GRIB 2 fields.  The more bits, the greater the precision and larger the GRIB 2 files.
+#  Fewer bits -> lower the precision -> smaller GRIB 2 files. The value in SCAL=(value), IS NOT
+#  the number of bits to use, but rather, a decimal scaling factor, which may be positive or
+#  negative depending on the field.  A darn good attempt was made to assign appropriate values
+#  for each fields so you probably will never need to change them, which is a good thing.
+#
+#  Finally - 1|0 in leftmost column turns field ON|OFF
+#  ===============================================================================================
+#
+
+ #  =======================================================================================================
+ #  Model Surface (Skin) Fields - 1|0 in leftmost column turns field ON|OFF
+ #
+ #  These should NOT be confused with the shelter or sensible weather fields. These fields are
+ #  valid at the MODEL SURFACE, which in most cases is the interface between the above and below
+ #  ground levels, or the thing you walk on, unless it's water. But we're not going there.
+ #  =======================================================================================================
+ #
+ (PRES_ON_SURFACE)                                          SCAL=(6.0) !  Pressure at Surface (Pa) FNUM=(024)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (HGT_ON_SURFACE)                                           SCAL=(6.0) !  Geopotential Height at Surface (gpm) FNUM=(025)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (TMP_ON_SURFACE)                                           SCAL=(4.0) !  Temperature at Surface (K) FNUM=(026)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (SNOWC_ON_SURFACE)                                         SCAL=(3.0) !  Snow Cover at Surface (%) FNUM=(120)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (PRES_ON_MEAN_SEA_LVL)                                     SCAL=(6.0) !  Pressure (PRES; Shuell) Reduced to Mean Sea Level (Pa) FNUM=(105)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (POT_ON_SURFACE)                                           SCAL=(5.0) !  Potential Temperature at Surface (K) FNUM=(027)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (EPOT_ON_SURFACE)                                          SCAL=(4.0) !  Equivalent Potential Temperature At Surface (K) FNUM=(548)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (SPFH_ON_SURFACE)                                          SCAL=(-4.0) !  Specific Humidity at Surface (kg kg-1) FNUM=(028)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (LAND_ON_SURFACE)                                          SCAL=(4.0) !  Land Cover (0=Sea at Surface (1=land)) FNUM=(050)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+ #  =======================================================================================================
+ #  Shelter Level (2 & 10 meter) Fields - 1|0 in leftmost column turns field ON|OFF
+ #
+ #  These are the fields, typically measured at 2 and 10m, that you compare to observations.
+ #  Just in case someone's watching. See comments at top of file regarding MAX/Min/Ave fields.
+ #  =======================================================================================================
+ #
+ (TMP_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                        SCAL=(4.0) !  Temperature at 2m Height Level (K) FNUM=(106)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_TMAX_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                   SCAL=(4.0) !  Period Maximum Temperature at 2m Height Level (K) FNUM=(345)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MIN_TMIN_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                   SCAL=(4.0) !  Period Minimum Temperature at 2m Height Level (K) FNUM=(346)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (AVE_TMP_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                    SCAL=(4.0) !  Period Mean Temperature at 2m Height Level (K) FNUM=(1001)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (POT_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                        SCAL=(5.0) !  Potential Temperature at 2m Height Level (K) FNUM=(546)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (EPOT_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                       SCAL=(4.0) !  Equivalent Potential Temperature at 2m Height Level (K) FNUM=(1005)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (RH_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                         SCAL=(4.0) !  Relative Humidity at 2m Height Level (%) FNUM=(114)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_RHMAX_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                  SCAL=(4.0) !  Period Maximum Relative Humidity at 2m Height Level (%) FNUM=(347)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MIN_RHMIN_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                  SCAL=(4.0) !  Period Minimum Relative Humidity at 2m Height Level (%) FNUM=(348)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (AVE_RH_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                     SCAL=(4.0) !  Period Mean Relative Humidity at 2m Height Level (%) FNUM=(1002)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (MIXR_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                       SCAL=(-4.0) !  Mixing Ratio at 2m Height Level (kg kg-1) FNUM=(760)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (SPFH_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                       SCAL=(-4.0) !  Specific Humidity at 2m Height Level (kg kg-1) FNUM=(112)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (DPT_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                        SCAL=(4.0) !  Dew Point Temperature at 2m Height Level (K) FNUM=(113)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (DEPR_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                       SCAL=(3.0) !  Dewpoint Depression at 2m Height Level (K) FNUM=(547)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (PRES_ON_SPEC_HGT_LVL_ABOVE_GRND_2m)                       SCAL=(6.0) !  Pressure at 2m Height Level (Pa) FNUM=(138)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (UGRD_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                      SCAL=(4.0) !  U-Component of Wind at 10m Height Level (m s-1) FNUM=(064)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (VGRD_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                      SCAL=(4.0) !  V-Component of Wind at 10m Height Level (m s-1) FNUM=(065)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (AVE_UGRD_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                  SCAL=(4.0) !  Period Mean U-Component of Wind at 10m Height Level (m s-1) FNUM=(1057)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (AVE_VGRD_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                  SCAL=(4.0) !  Period Mean V-Component of Wind at 10m Height Level (m s-1) FNUM=(1058)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+ (MAX_WIND_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                  SCAL=(4.0) !  Period Maximum Wind Speed On 10m Height Level (m s-1) FNUM=(422)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_MAXUW_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                 SCAL=(4.0) !  U Component of Period Maximum Wind Speed (M/S) at 10m Height Level (m s-1) FNUM=(506)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_MAXVW_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                 SCAL=(4.0) !  V Component of Period Maximum Wind Speed (M/S) at 10m Height Level (m s-1) FNUM=(507)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (AVE_WIND_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                  SCAL=(4.0) !  Period Mean Wind Speed at 10m Height Level (m/s) FNUM=(1003)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (MAX_GUST_ON_SPEC_HGT_LVL_ABOVE_GRND_10m)                  SCAL=(4.0) !  Period Maximum 10m Wind Speed (Gust) (m s-1) FNUM=(1004)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+#  =======================================================================================================
+#  Surface Precipitation and Other Related Fields - 1|0 in leftmost column turns field ON|OFF
+#
+#  These fields are dedicated to stuff that falls out of the (model) sky and can hit you on
+#  the head. Note that an explicit Bird Poop (BP) scheme has yet to be integrated into the model.
+#
+#  The "RAINFALL", "FREEZING RAIN", "SNOW & ICE", "GRAUPEL", and "HAIL" (MP scheme permitting)
+#  fields are an effort by the EMS Overlord to bin the precipitation amounts coming out of
+#  the model at each time step according to type. This is an attempt to account for situations
+#  where mixed precipitation is present. For these fields, the fraction of a precip type from
+#  the MP scheme at each time step is applied to the total precipitation (CU + MP) for that
+#  time step and the amounts summed accordingly. So, if 30% of the hydrometeors at the surface
+#  as determined by the MP scheme is graupel, then the total amount of graupel at that time
+#  step is 0.30*(CU + MP precipitation).
+#
+#  As for snowfall, the "SNOW & ICE" is the percentage of the "snow & ice" category from the
+#  MP scheme applied to the total precipitation (again, CU + MP), The "Snow & Graupel" fields
+#  are the percentage of snow & ice + graupel applied to the total precipitation. Some MP schemes
+#  like to precipitate graupel rather than snow & ice in situations where it should snow, so if
+#  you are looking for snowfall amounts (Liquid Equivalent) look to "SNOW & GRAUPEL" rather
+#  than just "SNOW & ICE".
+#
+#  Finally, the snow depth fields (WEASD and SNOD) are calculated within the LSM scheme and
+#  takes into account the amount of snow at the beginning of the simulation (initialization),
+#  snow melt, and new snow fall. There is a bit of hand waving and black magic involved as well,
+#  but these are the traditional snow fields output from NCEP models.
+#
+#  Finally, unless otherwise stated, ALL PRECIPITATION AMOUNTS ARE LIQUID EQUIVALENT, mm or kg/m^2,
+#  the math is left up to the student (YOU).
+#  =======================================================================================================
+#
+
+ #  =======================================================================================================
+ #  Period Total Accumulation Fields (Bucket Totals; mm)
+ #
+ #  The accumulation, or bucket dump, period is determined by the WRFOUT_PRECIP_ACCUM_PERIOD and
+ #  AUXHIST1_PRECIP_ACCUM_PERIOD parameters in the post_grib.conf file. Yes, you can have different
+ #  accumulation periods for the primary and auxiliary GRIB 2 files.
+ #  =======================================================================================================
+ #
+ (BUCKET_APCP_ON_SURFACE)                                   SCAL=(4.0) !  Period Accumulated Total Precipitation (Liquid Equivalent; kg/m^2) FNUM=(434)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_NCPCP_ON_SURFACE)                                  SCAL=(4.0) !  Period Total Accumulated Microphysics (Explicit) Precipitation (Liquid Equivalent; kg/m^2) FNUM=(436)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_ACPCP_ON_SURFACE)                                  SCAL=(4.0) !  Period Total Accumulated Convective Scheme Precipitation (Liquid Equivalent; kg/m^2) FNUM=(435)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (BUCKET_ARAIN_ON_SURFACE)                                  SCAL=(4.0) !  Period Total Accumulated Rainfall (Liquid Equivalent; kg/m^2) FNUM=(1013)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_AZRAIN_ON_SURFACE)                                 SCAL=(4.0) !  Period Total Accumulated Freezing Rain (Liquid Equivalent; kg/m^2) FNUM=(1015)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_ASICE_ON_SURFACE)                                  SCAL=(4.0) !  Period Total Accumulated Snow And Ice (Liquid Equivalent; kg/m^2) FNUM=(1016)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_ASNOW_ON_SURFACE)                                  SCAL=(4.0) !  Period Total Accumulated Snow & Graupel (Liquid Equivalent; kg/m^2) FNUM=(1017)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_AGRPL_ON_SURFACE)                                  SCAL=(4.0) !  Period Total Accumulated Graupel (Liquid Equivalent; kg/m^2) FNUM=(1018)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_AHAIL_ON_SURFACE)                                  SCAL=(4.0) !  Period Total Accumulated Hail (Liquid Equivalent; kg/m^2) FNUM=(1019)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ #  ============================================================================================================================
+ #  The following four snow fields are a bi-product of the LSM and NOT directly from the microphysics scheme.
+ #  To ease your pain and suffering, I will attempt to clarify what the fields contain:
+ #
+ #  The "WEASD" fields are accumulated snow since the start of integration and DO NOT include snow on ground @ T0  (kg m-2 or mm)
+ #  The "SNOD"  fields are the physical depth of the snow on ground INCLUDING snow@T0 (Acc+snow@T0-snow melt)  (m)
+ #  The "SDWE"  fields are the liquid equivalent if "SNOD" (kg m-2 or mm)
+ #
+ #  The "BUCKET_" fields contain the change from one GRIB file time to the next.
+ #  The Non-"BUCKET_" fields and the simulation accumulated or running values.
+ #
+ #  Note that BUCKET_SNOD_ON_SURFACE is NOT necessarily a physical snow depth accumulation field since it includes snow melting.
+ #  ============================================================================================================================
+ #
+ (WEASD_ON_SURFACE)                                         SCAL=(4.0) !  Simulation Total Water Equivalent of Accumulated Snow from LSM (kg m-2) FNUM=(119)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_WEASD_ON_SURFACE)                                  SCAL=(4.0) !  Water Equivalent of Period Accumulated Snow from LSM (kg m-2) FNUM=(437)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (SNOD_ON_SURFACE)                                          SCAL=(6.0) !  Total Physical Snow Depth at Surface from LSM (m) FNUM=(224)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_SNOD_ON_SURFACE)                                   SCAL=(6.0) !  Period Change in Total Physical Snow Depth from LSM (m) FNUM=(1012)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (SDWE_ON_SURFACE)                                          SCAL=(4.0) !  Liquid Equivalent of Total Physical Snow Depth at Surface from LSM (kg m-2)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (BUCKET_SDWE_ON_SURFACE)                                   SCAL=(4.0) !  Period Change in Liquid Equivalent of Total Physical Snow Depth at Surface from LSM (kg m-2)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+ #  =======================================================================================================
+ #  Simulation Total Accumulation Fields (Since the start of integration; mm)
+ #
+ #  Yes, you can get both simulation and period precipitation totals.
+ #  =======================================================================================================
+ #
+ (ACM_APCP_ON_SURFACE)                                      SCAL=(4.0) !  Simulation Accumulated Total Precipitation (Liquid Equivalent; kg/m^2) FNUM=(087)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (ACM_NCPCP_ON_SURFACE)                                     SCAL=(4.0) !  Simulation Total Accumulated Microphysics (Explicit) Precipitation (Liquid Equivalent; kg/m^2) FNUM=(034)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (ACM_ACPCP_ON_SURFACE)                                     SCAL=(4.0) !  Simulation Total Accumulated Convective Scheme Precipitation (Liquid Equivalent; kg/m^2) FNUM=(033)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (ACM_ARAIN_ON_SURFACE)                                     SCAL=(4.0) !  Simulation Total Accumulated Rainfall (Liquid Equivalent; kg/m^2) FNUM=(1006)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (ACM_AZRAIN_ON_SURFACE)                                    SCAL=(4.0) !  Simulation Total Accumulated Freezing Rain (Liquid Equivalent; kg/m^2) FNUM=(1007)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (ACM_ASICE_ON_SURFACE)                                     SCAL=(4.0) !  Simulation Total Accumulated Snow And Ice (Liquid Equivalent; kg/m^2) FNUM=(1008)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (ACM_ASNOW_ON_SURFACE)                                     SCAL=(4.0) !  Simulation Total Accumulated Snow & Graupel (Liquid Equivalent; kg/m^2) FNUM=(1009)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (ACM_AGRPL_ON_SURFACE)                                     SCAL=(4.0) !  Simulation Total Accumulated Graupel (Liquid Equivalent; kg/m^2) FNUM=(1010)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (ACM_AHAIL_ON_SURFACE)                                     SCAL=(4.0) !  Simulation Total Accumulated Hail (Liquid Equivalent; kg/m^2) FNUM=(1011)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+ #  =======================================================================================================
+ #  Precipitation Rate Fields - All are mm/s because that's what the GRIB files like.
+ #
+ #  The same description regarding the precipitation fields applies to the rate fields as well.
+ #  however, there is no bulk snowfall rate field. Also "SNOWFALL RATE" is really snow + graupel.
+ #  =======================================================================================================
+ #
+ (INST_TPRATE_ON_SURFACE)                                   SCAL=(4.0) !  Total (Everything) Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(167)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_NCRATE_ON_SURFACE)                                   SCAL=(4.0) !  Microphysics (Explicit) Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1021)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_CURATE_ON_SURFACE)                                   SCAL=(4.0) !  Convective Scheme Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(249)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (INST_RNRATE_ON_SURFACE)                                   SCAL=(4.0) !  Rainfall Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1022)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_ZRRATE_ON_SURFACE)                                   SCAL=(4.0) !  Freezing Rain Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1023)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_IPRATE_ON_SURFACE)                                   SCAL=(4.0) !  Snow & Ice Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1025)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_SNRATE_ON_SURFACE)                                   SCAL=(4.0) !  Snowfall Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1024)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_GPRATE_ON_SURFACE)                                   SCAL=(4.0) !  Graupel Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1026)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_HLRATE_ON_SURFACE)                                   SCAL=(4.0) !  Hail Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1027)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (INST_SFRATE_ON_SURFACE)                                   SCAL=(4.0) !  Snowfall Rate (Physical Depth; mm/s) FNUM=(1028)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (CPOFP_ON_SURFACE)                                         SCAL=(4.0) !  Percent of Precipitation that is Frozen (%) FNUM=(172)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+ #  =======================================================================================================
+ #  Period Maximum Precipitation Rate Fields - Again, all are mm/s because that's what the GRIB
+ #  files like. See comments at top of file regarding MAX/Min/Ave fields.
+ #  =======================================================================================================
+ #
+ (MAX_TPRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Total Precipitation Rate (Liq. Equiv.) on Surface (kg/m^2/s) FNUM=(1029)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_NCRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Microphysics (Explicit) Precipitation Rate on Surface (kg/m^2/s) FNUM=(1030)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_CURMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Convective Scheme Precipitation Rate on Surface (kg/m^2/s) FNUM=(1031)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (MAX_RNRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Rainfall Rate on Surface (kg/m^2/s) FNUM=(1032)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_ZRRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Freezing Rainfall Rate on Surface (kg/m^2/s) FNUM=(1033)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_SNRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Snowfall Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1034)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_IPRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Snow & Ice Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1035)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_GPRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Graupel Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1036)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_HLRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Hail Precipitation Rate (Liquid Equivalent; kg/m^2/s) FNUM=(1037)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_SFRMAX_ON_SURFACE)                                    SCAL=(4.0) !  Period Maximum Snowfall Rate (Physical Depth) on Surface (mm/s) FNUM=(1038)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+ #  =======================================================================================================
+ #  Simulated Radar Reflectivity Fields - 1|0 in leftmost column turns field ON|OFF
+ #
+ #  See comments at top of file regarding MAX/Min/Ave fields (but there are no mean reflectivity fields)
+ #  =======================================================================================================
+ #
+ (REFC_ON_ENTIRE_ATMOS)                                     SCAL=(4.0) !  Composite Reflectivity within Atmos Column (dBZ) FNUM=(252)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_REFC_ON_ENTIRE_ATMOS)                                 SCAL=(4.0) !  Period Maximum Composite Reflectivity (dBZ) FNUM=(1048)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+ #  =======================================================================================================
+ #  A few lightning fields:
+ #     LPI_ON_SURFACE  - Lightning Potential Index available when LIGHTNING_OPTION = 3 in run_lightning.conf
+ #  =======================================================================================================
+ #
+ (LPI_ON_SURFACE)                                           SCAL=(4.0) !  Lightning Potential Index (non-dim) FNUM=(1060)
+ L=(00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+
+ #  =======================================================================================================
+ #  Column Integrated Fields - 1|0 in leftmost column turns field ON|OFF
+ #
+ #  All fields are calculated during model integration
+ #  =======================================================================================================
+ #
+ (MAX_PWAT_ON_ENTIRE_ATMOS)                                 SCAL=(4.0) !  Period Maximum Precipitable Water within Atmos Column (kg m-2) FNUM=(1043)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_TCOLG_ON_ENTIRE_ATMOS)                                SCAL=(5.0) !  Period Maximum Total Column Graupel Integrated (Liquid Equivalent) (kg/m^2) FNUM=(1045)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_TCOLH_ON_ENTIRE_ATMOS)                                SCAL=(4.0) !  Period Maximum Total Column Integrated Hail (Liquid Equivalent) (kg/m^2) FNUM=(1046)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (UPHL_ON_SPEC_HGT_LVL_ABOVE_GRND_1-6km)                    SCAL=(4.0) !  Updraft Helicity Between 1 And 6km AGL at Height Level (m2 s-2) FNUM=(701)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (UPHL_ON_SPEC_HGT_LVL_ABOVE_GRND_2-5km)                    SCAL=(4.0) !  Updraft Helicity Between 2 And 5km AGL at Height Level (m2 s-2) FNUM=(427)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (MAX_UPHL_ON_SPEC_HGT_LVL_ABOVE_GRND_1-6km)                SCAL=(4.0) !  Period Maximum Updraft Helicity Between 1 And 6km AGL at Height Level (m2 s-2) FNUM=(700)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_UPHL_ON_SPEC_HGT_LVL_ABOVE_GRND_2-5km)                SCAL=(4.0) !  Period Maximum Updraft Helicity Between 2 And 5km AGL at Height Level (m2 s-2) FNUM=(420)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+ (MAX_MAXDVV_ON_SPEC_PRES_ABOVE_GRND_40-100hpa)             SCAL=(-6.0) !  Period Maximum Downward Vertical Velocity Between 40-100hpa (m s-1) FNUM=(424)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+ (MAX_MAXUVV_ON_SPEC_PRES_ABOVE_GRND_40-100hpa)             SCAL=(-6.0) !  Period Maximum Upward Vertical Velocity Between 40-100hpa (m s-1) FNUM=(423)
+ L=(10000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000 00000)
+
+
+***DONE WITH THIS GRID***

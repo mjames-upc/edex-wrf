@@ -1,0 +1,387 @@
+#!/usr/bin/perl
+#===============================================================================
+#         FILE:  sysinfo
+#
+#  DESCRIPTION:  The sysinfo routine collects information about each of the 
+#                systems passed as arguments. The information includes stuff
+#                such as the number of processors, amount of memory, where
+#                the UEMS is located, available disk space, the version of
+#                Linux being used, etc.
+#
+#                The routine is identical to mpicheck except that instead
+#                of running an MPI test program it mines your system for 
+#                nuggets of valuable information.
+#
+#       AUTHOR:  Robert Rozumalski - NWS
+#      VERSION:  18.3.1
+#      CREATED:  08 March 2018
+#===============================================================================
+#
+use warnings;
+use strict;
+require 5.008;
+use English;
+
+use Cwd 'abs_path';
+use FindBin qw($RealBin);
+use lib (abs_path("$RealBin/../Uutils"));
+
+use vars qw (%SysInfo);
+
+use Ecomm;
+use Ecore;
+use Elove;
+use Eenv;
+use Enet;
+use Others;
+
+#===============================================================================
+#   So sysinfo begins.  Note that while the %SysInfo hash is passed into
+#   the individual modules, it is global within a module. Any variables that
+#   are required later on will be carried in this hash.
+#===============================================================================
+#
+    #  Override interrupt handler - Use the local one since some of the local
+    #  environment variables are needed for clean-up after the interrupt.
+    #
+    $SIG{INT} = \&Ecore::SysIntHandle;
+
+    #  Make sure the UEMS environment is set
+    #
+    &Ecore::SysExit(-1,$0) if &Eenv::SetEnvironment($ENV{UEMS});
+
+    &Ecore::SysExit(1,$0)  if &Sysinfo_ReturnHandler(&Sysinfo_Start());
+
+    &Ecore::SysExit(1,$0)  if &Sysinfo_ReturnHandler(&Sysinfo_Process());
+
+
+&Ecore::SysExit(0,$0);
+
+
+sub Sysinfo_Start {
+#===============================================================================
+#  This subroutine calls routines that perform the initial configuration for
+#  sysinfo prior to any real work being done. The responsibility of this 
+#  section is to:
+#
+#      1. Initialize the %SysInfo hash
+#      2. Read and parse the user input options
+#
+#  Note that the handling of the return is different here than with the other
+#  routines as a return of the %SysInfo hash indicates success when an empty
+#  hash means failure.
+#===============================================================================
+#
+    return 11 unless %SysInfo = &Sysinfo_Initialize(\%SysInfo);
+
+    return 12 unless %SysInfo = &Sysinfo_OptionHandler(\%SysInfo);
+
+
+return 0;
+}
+
+
+sub Sysinfo_Process {
+#===============================================================================
+#  This routine loops through the list of hostnames passed to sysinfo, calling the
+#  &Others::SystemInformationHost routine, which collect the requested information
+#  (via uemsinfo) and then prints it out to the screen.
+#===============================================================================
+#
+    my $err = 0;
+
+    foreach my $host (@{$SysInfo{HOSTS}}) {
+
+        &Ecomm::PrintTerminal(2,4,255,1,1,"Collecting information about the machine known as \"$host\"");
+
+        #  Test whether the hostname points to the local host, in which case all the 
+        #  host information will be mined locally (Duh); otherwise, passwordless SSH
+        #  will be used.
+        #
+        unless ($SysInfo{SYSTEMS}{$host}{local} = &TestLocalHostname($host))  {
+
+            #  Since the system is not the local host, test whether it is available
+            #  and passwordless SSH can be used to run the commands necessary to 
+            #  collect the information.
+            #
+            if (my $notavail = (&TestHostAvailability($host) || &TestHostPasswdlessSSH($host))) {
+               &Ecomm::PrintTerminal(6,8,255,1,2,"Error connecting to $host: $notavail");
+               $err = 20 unless $err;
+               next;
+            }
+
+        }
+
+        #  Call the SystemInformationHost routine to collect the system information from
+        #  the $host machine and print it to the screen.
+        #
+        my %sysinfo =  &Others::SystemInformationHost($host,$SysInfo{SYSTEMS}{$host}{local});
+        &Ecomm::PrintTerminal(0,8,255,1,2,&Ecomm::FormatSystemInformationLong(\%sysinfo));
+        $err++ if $err;
+    }
+
+
+return $err;
+}
+
+
+sub Sysinfo_Initialize {
+#===============================================================================
+#  Initialize the common hashes and variables used by sysinfo
+#===============================================================================
+#
+    my $upref   = shift;
+    my %SysInfo = %{$upref};
+
+    unless (defined $ENV{UEMS} and $ENV{UEMS} and -e $ENV{UEMS}) {
+        print '\n\n    !  The UEMS environment is not properly set - EXIT\n\n';
+        return ();
+    }
+
+    my $DATE           = gmtime; chomp $DATE; $DATE = "$DATE UTC";
+    my $EXE            = &Others::popit($0);
+
+    #  ----------------------------------------------------------------------------------
+    #  Set default language to English because the UEMS attempts to match English
+    #  words when attempting to get system information.
+    #  ----------------------------------------------------------------------------------
+    #
+    $ENV{LC_ALL}       = 'C';
+
+    $ENV{EMSEXE}       = $EXE;
+
+    $SysInfo{DATE}     = $DATE;        #  The current system date and time
+    $SysInfo{EXE}      = $ENV{EMSEXE}; #  The name of sysinfo.pl, just in case its changed
+
+    $SysInfo{UEMSVER}  = &Elove::GetUEMSrelease($ENV{UEMS});
+
+    %{$SysInfo{localhost}} = &Others::SystemInformation();
+
+    &Elove::Greeting($SysInfo{EXE},$SysInfo{UEMSVER},$SysInfo{localhost}{shost});
+
+
+return %SysInfo;
+}
+
+
+sub Sysinfo_GetOptions {
+#===============================================================================
+#  The Sysinfo_GetOptions routine parses the flags and options passed
+#  from the command line. Simple enough.
+#===============================================================================
+#
+use Getopt::Long qw(:config pass_through);
+
+    my %Option = ();
+
+    GetOptions ( "h|help|?"       => sub {&Sysinfo_HelpMe},  #  Just what the doctor ordered
+                 "info"           => sub {&Sysinfo_HelpMe}   #  Dump out some information on sysinfo and get out
+               );  
+
+    @{$Option{SYSTEMS}} = @ARGV  ? @ARGV : ();   # All that should be here are machine names
+    $_ = lc $_ foreach @{$Option{SYSTEMS}};
+
+    push  @{$Option{SYSTEMS}} => $SysInfo{localhost}{hostname0} unless @{$Option{SYSTEMS}};
+    @{$Option{SYSTEMS}} = &Others::rmdups(@{$Option{SYSTEMS}});
+
+
+return %Option;
+}
+
+
+sub Sysinfo_OptionHandler {
+#===============================================================================
+#  This routine manages the arguments from the command line and then determines
+#  the list of systems on which to collect information.
+#===============================================================================
+#
+      my %Options = ();
+
+      my $upref   = shift;
+      my %SysInfo = %{$upref};
+
+      %Options           = &Sysinfo_GetOptions();
+      @{$SysInfo{HOSTS}} = &Sysinfo_GetHosts(\%Options);
+
+return %SysInfo;
+}
+
+
+sub Sysinfo_DefineOptions {
+#===============================================================================
+#  This routine defined the list of options that can be passed to the program
+#  and returns them as a hash.
+#===============================================================================
+#
+    my %opts = (
+                '--info'       => { arg => ''   , help => '&SysinfoHelp_info'      , desc => 'Provide some information about sysinfo'},
+                '--help'       => { arg => ''   , help => '&SysinfoHelp_help'      , desc => 'Print this list again'}
+                );
+
+return %opts;
+}
+
+
+sub Sysinfo_RoutineGuidance  {
+#===============================================================================
+#  This routine provides the basic structure for the sysinfo help menu 
+#  should  the "--help" option is passed or something goes terribly wrong.
+#===============================================================================
+#
+    my $mesg  = qw{};
+    my @helps = ();
+
+    my $exe   = 'sysinfo'; my $uce = uc $exe;
+
+    my %opts  = &Sysinfo_DefineOptions();  #  Get options list
+
+    push @helps => &Ecomm::TextFormat(0,0,114,0,1,"RUDIMENTARY GUIDANCE FOR $uce (Because you need it)");
+
+    $mesg = "The sysinfo routine mines systems running the UEMS for nuggets of information that might be of ".
+            "value to users when troubleshooting problems. This information includes the number of cores, ".
+            "amount of memory, hyper-threading status, location of the UEMS, and other tantalizing tidbits, ".
+            "all of which are neatly formatted and printed to the screen for your consumption.\n\n".
+     
+            "So consume, my friend, consume."; 
+
+    push @helps => &Ecomm::TextFormat(2,2,90,1,1,$mesg);
+
+
+    push @helps => &Ecomm::TextFormat(0,0,114,2,1,"$uce USAGE:");
+    push @helps => &Ecomm::TextFormat(4,0,144,1,1,"% $exe  [Hostname1 ... HostnameN]");
+
+    push @helps => &Ecomm::TextFormat(0,0,124,2,1,"AVAILABLE OPTIONS - BECAUSE YOU ASKED NICELY AND I'M BEGINNING TO LIKE THE WAY YOU SMELL");
+
+    push @helps => &Ecomm::TextFormat(4,0,114,1,2,"Flag            Argument [optional]       Description");
+
+    foreach my $opt (sort keys %opts) {
+        push @helps => &Ecomm::TextFormat(4,0,256,0,1,sprintf("%-17s  %-18s  %-60s",$opt,$opts{$opt}{arg},$opts{$opt}{desc}));
+    }
+
+
+    push @helps => &Ecomm::TextFormat(0,0,114,2,2,"FOR ADDITIONAL HELP, LOVE AND UNDERSTANDING:");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,1,"a. Read  - docs/uems/uemsguide  (just pick a chapter, any chapter)");
+    push @helps => &Ecomm::TextFormat(2,0,114,0,1,"Or");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,1,"b. http://strc.comet.ucar.edu/software/uems");
+    push @helps => &Ecomm::TextFormat(2,0,114,0,1,"Or");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,2,"c. % $exe --help  For this menu again, just in case you missed it the first time");
+
+    my $help = join '' => @helps;
+
+return $help;
+}
+
+
+sub Sysinfo_ReturnHandler {
+#===============================================================================
+#  The purpose of this routine is to interpret the return codes from the various
+#  sysinfo subroutines. The value that is returned identifies the routine from
+#  which it was passed and any specific error, where the 10's digit identifies
+#  the routine and the 1s is the error. Some routines may provide more error
+#  information than others.
+#
+#  The routine itself returns 0 (sysinfo carries on) for success or 1 (sysinfo
+#  terminates) for failure.
+#===============================================================================
+#
+    my $rc = shift;
+
+    #  Return codes 11 - 19 are reserved for the Sysinfo_Start Module
+    #
+    if ($rc == 11) {&Ecomm::PrintMessage(6,6,96,1,1,"Apparently, $ENV{EMSEXE} is upset with you at the moment.");}
+    if ($rc == 12) {&Ecomm::PrintMessage(0,6,96,1,1,'How are you going to explain this mess to your parents?!');}
+
+    #  Return codes 20+ are reserved for the Sysinfo_Process Module
+    #
+    if ($rc == 20) {&Ecomm::PrintMessage(0,6,96,1,1,'"What we have here, is failure to communicate"');}
+    if ($rc  > 20) {&Ecomm::PrintMessage(0,6,96,1,1,'Well, your glass was half full - until you turned it upside down!');}
+
+return $rc ? 1 : 0;
+}
+
+
+sub Sysinfo_HelpMe {
+#===============================================================================
+#  The Sysinfo_HelpMe routine determines what to do when the --help flag is
+#  passed with or without an argument. 
+#===============================================================================
+#
+    &Ecomm::PrintTerminal(0,7,255,1,1,&Sysinfo_RoutineGuidance);
+
+&Ecore::SysExit(-4); 
+}
+
+
+sub Sysinfo_GetHosts {
+#===============================================================================
+#  This routine checks the validity of the hostnames or IPs passed on the 
+#  command line. If none are passed then assume information to be collected
+#  for the local host only. Returned is a hash to be populated with 
+#  the collected information.
+#===============================================================================
+#
+     my @hosts   = ();
+     my $upref   = shift;
+     my %options = %{$upref};
+
+     #  If an argument was passed then simply check whether its a IP address or
+     #  hostname. If nothing was passed then return the local hostname.
+     #
+     foreach my $arg (@{$options{SYSTEMS}}) {
+         my ($host, $addr) = &Enet::isHostnameOrIP($arg);
+         $host = &Enet::Address2Hostname($addr) if $addr;
+         push @hosts => $host  if $host;
+     }
+
+
+return @hosts;
+}
+
+
+sub TestHostAvailability {
+#===============================================================================
+#  A simple interface to the &Enet::TestPingHost routine
+#===============================================================================
+#
+    my $host  = shift;
+
+return &Enet::TestPingHost($host) ? 0 : "TCP ping to $host - Failed (System not reachable)";
+}
+
+
+sub TestHostPasswdlessSSH {
+#===============================================================================
+#  Use the &TestHostPasswdlessSSH routine to test whether passwordless SSH can be used 
+#  to log into the targeted host.  This routine returns a value of 0 if no problems
+#  occurred or a message hopefully indicating why the test failed.
+#===============================================================================
+#
+    my $host = shift || return 'Missing hostname in argument passed to TestHostPasswdlessSSH';
+
+    return "Passwordless SSH Connection error to $host - $!" if &Enet::TestPasswordlessSSH($host);
+
+return 0;
+}
+
+
+sub TestLocalHostname {
+#===============================================================================
+#  Simple routine to determine whether the hostname passed is that of the
+#  local host or one of it's aliases.  For this test the $host hostname 
+#  will be compared to the hostnames in the %hostinfo hash.
+#===============================================================================
+#
+    my %hostinfo = &Others::SystemAddressInfo();
+
+    for (shift) {
+        return 1 if $_ eq 'local';
+        return 1 if $_ eq 'localhost';
+        return 1 if $_ eq $hostinfo{hostname0};
+        return 1 if $_ eq $hostinfo{hostname1};
+        return 1 if $_ eq $hostinfo{shost};
+    }
+
+return 0;
+}
+
+

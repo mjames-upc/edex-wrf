@@ -1,0 +1,147 @@
+
+EMS Benchmark README File
+
+
+I.   A bit of an introduction
+
+     The EMS package includes a preconfigured WRF ARW core domain for the purpose of 
+     testing the installation and evaluating the performance of your system when running 
+     a simulation. All the initialization data are provided and the configuration has 
+     been well tested, so running the benchmark test should be a priority for new users 
+     or anyone else with the desire to taste the sweet nectar of success. Running the 
+     benchmark is straightforward provided you follow the simple guidance provided below.
+
+     The benchmark case consists of a primary (outermost) domain with two nested sub-
+     domains. The purpose for this configuration is to provide an adequate measure of 
+     performance across a wide range of computer systems. If you are using a stand-alone 
+     workstation with a modest amount of physical memory (8Gb minimum) you should start 
+     by running only over the primary domain. This is simply because increasing the 
+     number of computational domains, and thus the number of grid points, will increase 
+     your system memory requirements.
+
+
+     BTW - If you don't know how much memory you have on your system, then just run the 
+           EMS provided "sysinfo" utility:
+
+      %  sysinfo
+
+
+     After you have familiarized yourself with the benchmark results, feel free expand 
+     your numerical weather prediction horizons by testing the sensitivity of the simulation 
+     to changes in the model physics or dynamics.  The configuration files are located 
+     within the conf/ems_run directory. However, keep in mind that this exercise is intended 
+     to be a learning experience, so failure is always an option.
+
+
+II.  Benchmark case summary
+
+
+     The benchmark case is a 30-hour simulation of a major tornado outbreak that occurred 
+     from April 26-28 2011, across the southeast US. The simulation covers the period of 
+     0600 UTC 27 through 12 UTC 28 April, during which time more than 300 tornadoes were 
+     reported.
+
+
+     A summary of the domain and run configuration is provided below:
+
+
+      Active Domains                Domain 01               Domain 02               Domain 03
+    *********************************************************************************************
+
+     Domain & Run Information           
+
+       Domain Type               :  Limited Area            Limited Area            Limited Area
+       Primary Time Step         :  90 Seconds              30 Seconds              10 Seconds
+       Grid dimensions (NX x NY) :  211 x 201               238 x 196               334 x 232 
+       Vertical Layers (NZ)      :  45                      45                      45
+       Grid Spacing              :  18.00km                 6.00 km                 2.00 km
+       Top of Model Atmosphere   :  50mb                    50mb                    50mb
+       Parent Domain             :  NA                      Domain 01               Domain 02
+
+     Run Information                                 
+
+       Start Date                :  2011 Apr 27 06:00 UTC   2011 Apr 27 06:00 UTC   2011 Apr 27 06:00 UTC       
+       End Date                  :  2011 Apr 28 12:00 UTC   2011 Apr 28 12:00 UTC   2011 Apr 28 12:00 UTC       
+       Simulation Length         :  30 Hours                30 Hours                30 Hours                    
+       Boundry Update Freq       :  06 Hours                
+
+
+
+     A complete listing of the configuration along with the physics and dynamics options 
+     can be found by using the “runinfo” utility - after you have run ems_prep (see below). 
+     To view this information for any simulation, run the following from the top of any 
+     run-time domain directory:
+
+        %  runinfo  [--domain 2[,3[,...]]]
+
+     Where the "--domain" flag is only necessary when requesting information about nested domains.
+
+
+     If you prefer looking at pictures, and who doesn't, a depiction of benchmark domain is 
+     provided by <domain>/static/projection.jpg.
+
+     Finally, prior to running the benchmark simulation, be sure to check the number of CPUs to 
+     be used in the conf/ems_run/run_ncpus.conf file and edit the values to reflect your system. 
+
+     And no, you cannot use any "virtual" processors made available when hyper-threading is turned on.
+
+
+
+III. How to run the benchmark case
+
+     Running the benchmark case with the EMS is straightforward (as stated earlier):
+
+     Step I.  From the util/benchmark/27april2011 directory, run the ems_prep routine:
+
+                 %  ems_prep  --benchmark
+
+              Or if you wish to include the first nested domain:
+
+                  %  ems_prep  --benchmark  --domain 2
+
+              Or if you are going for the “whole kielbasa”:
+
+                  %  ems_prep  --benchmark  --domain 2,3  (no spaces in 2,3)
+
+     Note: If you request domains 2 and 3 when running ems_prep, you do not have include them 
+           when running the simulation; however, they must be included if you plan on using them.
+
+
+
+     Step II. Run ems_run to begin the simulation:
+
+                  %  ems_run
+
+              Or if you wish to include the nested domain(s):
+
+                  %  ems_run  --domain 2[,3]
+
+
+        Following completion of the simulation the output in netCDF format will be located in the 
+        wrfprd directory. You may use the “ncview” utility (provided with the EMS) to view the results:
+
+                 %  ncview <netCDF filename>
+
+        Or you can continue and post-process the files into a secondary format.
+
+
+
+     Step III. (Optional) Convert the output files into another format
+
+        The netCDF simulation output files will be located in the wrfprd directory along with any 
+        files from the nested domains (if selected). You can convert the files to grib 2 format 
+        (and GrADS, GEMPAK) by running the ems_post routine.
+
+             % ems_post --grib  (For grib 2 files only)
+
+        Or if you want to process the nested domain:
+
+             % ems_post --grib --domain 2 (or 3)
+
+        Note that you can currently process only one domain at a time. All processed data files 
+        will be located in the emsprd directory.
+
+        There are additional post processing options available to you. Please see Chapter 9 of the 
+        EMS user's guide or "ems_post --help" for the gory details.
+
+

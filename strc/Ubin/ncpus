@@ -1,0 +1,499 @@
+#!/usr/bin/perl
+#==================================================================================
+#
+#         FILE:  ncpus
+#
+#  DESCRIPTION:  The ncpus routine attempts to determine the number of available
+#                processors for the machine on which  it is being run. It simply
+#                reads the contents of the /proc/cpuinfo file, does some magic
+#                and then spits out a number. Whether it is the correct number
+#                depends completely upon the skill of the author to distill
+#                the available information into something meaningful, such
+#                as "42".
+#
+#                A value of 0 (cpus) indicates there was a problem, which may
+#                be better illuminated by passing the '--verbose' flag.
+#
+#       AUTHOR:  Robert Rozumalski - NWS
+#      VERSION:  18.3.1
+#      CREATED:  08 March 2018
+#==================================================================================
+#
+use warnings;
+use strict;
+require 5.008;
+use English;
+
+
+use vars qw (%ProcCount);
+
+#==================================================================================
+#   So ProcCount begins.  Note that while the %ProcCount hash is passed into
+#   the individual modules, it is global within a module. Any variables that
+#   are required later on will be carried in this hash.
+#==================================================================================
+#
+    CORE::exit 1  if &ProcCount_Start();
+
+    CORE::exit 1  if &ProcCount_SystemCpuInfo();
+
+CORE::exit 0;
+
+
+sub ProcCount_Start {
+#==================================================================================
+#  This subroutine calls routines that perform the initial configuration for
+#  ProcCount prior to any real work being done. The responsibility of this 
+#  section is to:
+#
+#      1. Initialize the %ProcCount hash
+#      2. Read and parse the user input options
+#
+#  Note that the handling of the return is different here than with the other
+#  routines as a return of the %ProcCount hash indicates success when an empty
+#  hash means failure.
+#==================================================================================
+#
+    return 12 unless %ProcCount = &ProcCount_GetOptions(\%ProcCount);
+
+return 0;
+}
+
+
+sub ProcCount_GetOptions {
+#==================================================================================
+#  The ProcCount_GetOptions routine parses the flags and options passed
+#  from the command line. Simple enough.
+#==================================================================================
+#
+use Getopt::Long qw(:config pass_through);
+
+    my %Option = ();
+
+    GetOptions ( "h|help|?"       => sub {&ProcCount_HelpMe(@ARGV)},  #  Just what the doctor ordered
+                 "V|v|Verbose"    => \$Option{VERBOSE},              #  Dump out more information than desired
+                 "sockets"        => \$Option{SOCKETS},              #  Dump out sockets, cores per socket, and total cores
+                 "D|d|debug"      => \$Option{DEBUG}                 #  Dump out even more useless information
+               );
+
+    $Option{VERBOSE} = 1 if $Option{DEBUG};
+    $Option{SOCKETS} = 1 if $Option{VERBOSE};
+
+return %Option;
+}
+
+
+sub ProcCount_SystemCpuInfo {
+#==================================================================================
+#  This routine attempts to gather information about the CPUs on the system,
+#  through use of the "lscpu" command and interrogating the /proc/cpuinfo file.
+#  Ideally, just the lscpu command would be used because it tends to provide more
+#  accurate information on whether hyper-threading is turned ON but neither
+#  method is perfect.
+#==================================================================================
+#
+    my %info = ();
+       %info = &ProcCount_SystemCpuInfo1(\%info);
+       %info = &ProcCount_SystemCpuInfo2(\%info);
+
+    my ($tcpus, $tprocs, $tcores) = (0, 0, 0);  #  Old-School
+
+    #  User messages of love and encouragement.
+    #
+    my %mesgs=();
+
+       $mesgs{intht} = "Special note on hyper-threading:\n\nAttempting to use virtual \"Hyper-threaded\" CPUs while running ".
+                       "the UEMS may result in a degradation in performance.\n\n";
+
+
+       $info{message}= $info{ht} ? $mesgs{intht} : ' ';
+
+       &PrintTerminal(0,2,48,0,0,'Sockets, Cores per Socket, Total Cores, Total Threads:') if $ProcCount{VERBOSE};
+       $ProcCount{SOCKETS} ? &PrintTerminal(0,2,23,0,1,"$info{sockets}  $info{cores_per_socket}  $info{total_cores}  $info{total_threads}") 
+                           : &PrintTerminal(0,2,23,0,1,$info{total_cores} ? $info{total_cores} : 0);
+
+
+return 0;
+} #  ProcCount_SystemCpuInfo
+
+
+sub ProcCount_SystemCpuInfo1 {
+#==================================================================================
+#  This routine attempts reads the /proc/cpuinfo file and return valuable
+#  CPU related information.  Note that this routine is similar to the
+#  &Others::SystemCpuInfo1 routine except that its missing the cpuid call.
+#==================================================================================
+#
+    my $href = shift;
+    my %info = %{$href};
+
+
+    #  The list of temporary variables used
+    #
+    my ($modelname, $processor, $cpucores, $siblings, $bogomips) = (0, 0, 0, 0, 0);
+    my %phyid   = ();
+    my %coreid  = ();
+    my @coreids = ();
+
+    if ( -e '/proc/cpuinfo' ) {
+       open (my $fh, '<', '/proc/cpuinfo'); my @lines = <$fh>; close $fh; foreach (@lines) {chomp; s/^\s*/    /g; s/\s+$//g;}
+       foreach (@lines) {
+           chomp;
+           if  ( s/^\s*(model name)\s*://i )  {s/ +/ /g;($modelname = $_) =~ s/^ //g;}
+           if  ( s/^\s*(physical id)\s*://i ) {$_+=0;$phyid{$_} = (defined $phyid{$_}) ? $phyid{$_}++ : 0;}
+           if  ( s/^\s*(processor)\s*://i )   {$processor++}
+           if  ( s/^\s*(cpu cores)\s*://i )   {$cpucores = $_+=0 if $_;}
+           if  ( s/^\s*(siblings)\s*://i )    {$siblings = $_+=0 if $_;}
+           if  ( s/^\s*(core id)\s*://i )     {$_+=0;push @coreids => $_;}
+           if  ( s/^\s*(bogomips)\s*://i )    {$bogomips = $_+=0 if $_;}
+
+       }
+
+
+    } my $amd = ($modelname =~ /amd/i) ? 1 : 0;
+
+
+    $processor = 1 unless $processor;
+    $cpucores+=0; $cpucores = 1 unless $cpucores;
+    $siblings+=0; $siblings = 1 unless $siblings;
+    $bogomips+=0; $bogomips = 0 unless $bogomips;
+
+    my $sockets   = keys %phyid;  $sockets = 1 unless $sockets; #  The number of sockets on the system
+    my $thrdscore = int ($siblings/$cpucores);
+
+
+    $info{model_name}       = $modelname if $modelname;
+    $info{sockets}          = $sockets;
+    $info{cores_per_socket} = $cpucores;
+    $info{total_cores}      = $cpucores*$sockets;
+    $info{threads_per_core} = $thrdscore;
+    $info{total_threads}    = $info{threads_per_core} * $info{total_cores};
+    $info{siblings}         = $siblings;
+    $info{cpu_speed}        = sprintf('%.3f',0.001*int($bogomips*0.5));
+    $info{ht}               = (! $amd and $thrdscore > 1) ?  'On - But not recommended!' : 'Off';
+    $info{amd}              = $amd;
+
+    $info{cputype}          = `/bin/uname -p`; chomp $info{cputype};
+
+
+    if ($ProcCount{DEBUG}) {
+        &PrintTerminal(0,5,144,2,1,"Determined from the /proc/cpuinfo file:");
+        &PrintTerminal(0,5,144,0,1,'------------------------------------');
+        &PrintTerminal(0,7,144,0,1,"CPU Model Name   : $info{model_name}");
+        &PrintTerminal(0,7,144,0,1,"CPU Speed        : $info{cpu_speed} GHz");
+        &PrintTerminal(0,7,144,0,1,"Sockets          : $info{sockets}");
+        &PrintTerminal(0,7,144,0,1,"Cores per Socket : $info{cores_per_socket}");
+        &PrintTerminal(0,7,144,0,1,"Total Cores      : $info{total_cores}");  
+        &PrintTerminal(0,7,255,0,1,"Core IDs         : @coreids");
+        &PrintTerminal(0,7,144,0,1,"Threads per Core : $info{threads_per_core}");
+        &PrintTerminal(0,7,144,0,1,"Total Threads    : $info{total_threads}");
+        &PrintTerminal(0,7,144,0,2,"Hyper-Threading  : $info{ht}");
+    }
+
+
+return %info;
+} #  ProcCount_SystemCpuInfo1
+
+
+sub ProcCount_SystemCpuInfo2 {
+#==================================================================================
+#  This routine attempts to mine the output from the lscpu command for valuable
+#  CPU related information, and then returns it. Note that this routine is 
+#  similar to the &Others::SystemCpuInfo2 except that its missing the cpuid call.
+#==================================================================================
+#
+    my $href = shift;
+    my %info = %{$href};
+
+
+    #  The list of temporary variables used
+    #
+    my ($modelname, $sockets, $totlcores, $cpucores, $thrdscore, $bogomips, $cpuarch) = (0, 0, 0, 0, 0, 0, 0);
+    my %phyid   = ();
+    my %coreid  = ();
+    my @coreids = ();
+    my %node    = ();
+
+    foreach (`lscpu`) {
+        chomp; s/[\)|\(]//g; s/:\s*/:/g;
+        if  ( s/^\s*(vendor id)\s*://i )  {s/ +/ /g;($modelname = $_) =~ s/^ //;}
+        if  ( s/^\s*(architecture)\s*://i ){s/ +/ /g;($cpuarch = $_) =~ s/^ //g;}
+        if  ( s/^\s*(threads per core)\s*://i){$thrdscore = $_+=0 if $_;}
+        if  ( s/^\s*(cores per socket)\s*://i){$cpucores = $_+=0 if $_;}
+        if  ( s/^\s*(sockets)\s*://i )     {$sockets = $_+=0 if $_;}
+        if  ( s/^\s*(core id)\s*://i )     {$_+=0;push @coreids => $_;}
+        if  ( s/^\s*(bogomips)\s*://i )    {$bogomips = $_+=0 if $_;}
+        if  ( s/^\s*(cpus)\s*://i )        {$totlcores= $_+=0 if $_;}
+        if  ( s/^\s*numa node(\d)\s*cpus://i ) {$node{$1} = $_ if $_;}
+    } my $amd = ($modelname =~ /amd/i) ? 1 : 0;
+
+
+    $cpucores+=0; $cpucores = 1 unless $cpucores;
+    $bogomips+=0; $bogomips = 0 unless $bogomips;
+
+    unless ($cpuarch) {$cpuarch = `/bin/uname -p`; chomp $cpuarch;}
+
+    $info{model_name}       = $modelname unless $info{model_name};
+    $info{cputype}          = $cpuarch ? $cpuarch : 'Unknown';
+    $info{sockets}          = $sockets;
+    $info{cores_per_socket} = $cpucores;
+    $info{total_cores}      = $cpucores*$sockets;
+    $info{threads_per_core} = $thrdscore;
+    $info{cpu_speed}        = sprintf('%.3f',0.001*int($bogomips*0.5));
+    $info{ht}               = (! $amd and $thrdscore > 1) ? 1 : 0;
+    $info{amd}              = $amd;
+
+
+    if ($ProcCount{DEBUG}) {
+        &PrintTerminal(0,5,144,2,1,"Determined from the \"lscpu\" command:");
+        &PrintTerminal(0,5,144,0,1,'------------------------------------');
+        &PrintTerminal(0,7,144,0,1,"CPU Model Name   : $info{model_name}");
+        &PrintTerminal(0,7,144,0,1,"CPU Speed        : $info{cpu_speed} GHz");
+        &PrintTerminal(0,7,144,0,1,"Sockets          : $info{sockets}");
+        &PrintTerminal(0,7,144,0,1,"Cores per Socket : $info{cores_per_socket}");
+        &PrintTerminal(0,7,144,0,1,"Total Cores      : $info{total_cores}");
+        &PrintTerminal(0,7,144,0,1,"Threads per Core : $info{threads_per_core}");
+        &PrintTerminal(0,7,144,0,1,"Total Threads    : $info{total_threads}");
+        for my $socket (sort {$a <=> $b} keys %node) {
+            my ($pc, $hc) = split ',' => $node{$socket}; $hc = '' unless defined $hc;
+            &PrintTerminal(0,7,144,0,1,$hc ? "Socket $socket Cores   : $pc, $hc (Hyper-Threaded)" : "Socket $socket Cores   : $pc");
+        }
+        &PrintTerminal(0,1,1,1,2,' ');
+    }
+
+
+return %info;
+} #  ProcCount_SystemCpuInfo2
+
+
+sub ProcCount_HelpMe {
+#==================================================================================
+#  The ProcCount_HelpMe routine determines what to do when the --help flag is
+#  passed with or without an argument. 
+#==================================================================================
+#
+    &PrintTerminal(0,7,255,1,1,&ProcCount_ListOptions);
+
+CORE::exit 0;
+}
+
+
+sub ProcCount_ListOptions  {
+#==================================================================================
+#  This routine provides the basic structure for the ncpus help menu 
+#  should  the "--help" option is passed or something goes terribly wrong.
+#==================================================================================
+#
+    my $mesg  = qw{};
+    my @helps = ();
+
+    my $exe   = 'ncpus'; my $uce = uc $exe;
+
+    my %opts  = &ProcCount_DefineOptions();  #  Get options list
+
+    push @helps => &TextFormat(0,0,114,0,1,"RUDIMENTARY GUIDANCE FOR $uce (Because you need it)");
+
+    $mesg = "The primary purpose of $exe is to determine the number of available processors for the ".
+            "machine on which it is being run. The routine simply mines local system for information, ".
+            "then does some magic and spits out a number. Whether it is the correct number depends ".
+            "completely upon the skill of the UEMS developer to distill the available information ".
+            "into something meaningful, such as \"42\".\n\n".
+
+            "A value of 0 (cores) indicates there was a problem, which may be better illuminated ".
+            "by passing the '--verbose' flag.";
+
+    push @helps => &TextFormat(2,2,90,1,1,$mesg);
+
+    push @helps => &TextFormat(0,0,114,2,1,"$uce USAGE:");
+    push @helps => &TextFormat(4,0,144,1,1,"% $exe  [--sockets [--verbose]]");
+
+    push @helps => &TextFormat(0,0,124,2,1,"AVAILABLE OPTIONS - BECAUSE I'M BEGINNING TO LIKE THE NEFARIOUS TWINKLE IN YOUR EYE");
+
+    push @helps => &TextFormat(4,0,114,1,2,"Flag            Argument [optional]       Description");
+
+    foreach my $opt (sort keys %opts) {
+        push @helps => &TextFormat(4,0,256,0,1,sprintf("%-17s  %-18s  %-60s",$opt,$opts{$opt}{arg},$opts{$opt}{desc}));
+    }
+
+
+    push @helps => &TextFormat(0,0,114,2,2,"FOR ADDITIONAL HELP, LOVE AND UNDERSTANDING:");
+    push @helps => &TextFormat(6,0,114,0,1,"a. Read  - docs/uems/uemsguide/uemsguide_chapter04.pdf");
+    push @helps => &TextFormat(2,0,114,0,1,"Or");
+    push @helps => &TextFormat(6,0,114,0,1,"b. http://strc.comet.ucar.edu/software/uems");
+    push @helps => &TextFormat(2,0,114,0,1,"Or");
+    push @helps => &TextFormat(6,0,114,0,1,"c. % $exe --help  For this menu again");
+
+    my $help = join '' => @helps;
+
+return $help;
+}
+
+
+sub ProcCount_DefineOptions {
+#==================================================================================
+#  This routine defined the list of options that can be passed to the program
+#  and returns them as a hash.
+#==================================================================================
+#
+    my %opts = (
+                '--sockets'    => { arg => ''   , help => '&ProcCountHelp_sockets'   , desc => 'List the number of sockets, cores per socket, total cores, and total threads on the machine'},
+                '--verbose'    => { arg => ''   , help => '&ProcCountHelp_verbose'   , desc => 'Provide unnecessary details - mostly for debugging'},
+                '--debug'      => { arg => ''   , help => '&ProcCountHelp_debug'     , desc => 'Provide even more verbosermation (It is in the lexicon now'},
+                '--help'       => { arg => ''   , help => '&ProcCountHelp_help'      , desc => 'Print this list again in case you missed it the first timte'}
+                );
+
+return %opts;
+}
+
+
+sub TextFormat {
+#==================================================================================
+#  Routine to format a sentence/paragraph for printing.  The arguments are:
+#
+#  $h_indnt  -  Number of spaces to indent the 1st line of the string $head
+#  $b_indnt  -  Number of spaces to indent remaining lines of $head or all of @body
+#  $wrapcol  -  Column number at which to wrap the paragraph, independent of indent
+#  $leadnl   -  Number of newlines before initial line of text
+#  $trailnl  -  Number of newlines after final line of text
+#  @body     -  Array of Character strings that make up the paragraph
+#==================================================================================
+#
+use Text::Wrap;
+
+    my $nl = "\n";
+
+    my ($h_indnt,$b_indnt,$wrapcol,$leadnl,$trailnl,@body)  = @_;
+
+    return '' unless @body;
+
+    my $head = shift @body;
+
+    #  Set defaults
+    #
+    local $Text::Wrap::columns = $wrapcol > 80 ? $wrapcol : 80;  # sets the wrap point. Default is 80 columns.
+    local $Text::Wrap::separator="\n";
+    local $Text::Wrap::unexpand=0;
+
+    $h_indnt = 0 unless $h_indnt =~ /^\d+$/;
+    $b_indnt = 0 unless $b_indnt =~ /^\d+$/;
+
+    $h_indnt   = ! $h_indnt ? 0 : $h_indnt < 0 ? 0 : $h_indnt;
+    $b_indnt   = ! $b_indnt ? 0 : $b_indnt < 0 ? 0 : $b_indnt;
+
+    $leadnl  = $leadnl  < 0 ? sprintf ('%s',$nl x 1) : sprintf ('%s',$nl x $leadnl);
+    $trailnl = $trailnl < 0 ? sprintf ('%s',$nl x 1) : sprintf ('%s',$nl x $trailnl);
+
+    my $hindnt = $h_indnt < 0 ? sprintf('%s',q{ } x 1) : sprintf('%s',q{ } x $h_indnt);
+    my $bindnt = sprintf('%s',q{ } x $b_indnt);
+
+    my $bodyA = wrap($hindnt,$bindnt,$head); $bodyA = "$bodyA\n\n" if @body;
+    my $bodyB = @body ? fill($bindnt,$bindnt,@body) : '';
+
+return "$leadnl$bodyA$bodyB$trailnl";
+} #  TextFormat
+
+
+
+sub PrintTerminal {
+#==================================================================================
+#  This routine prints all error, warning, and information statements to the
+#  user with a consistent format.
+#==================================================================================
+#
+use Text::Wrap;
+
+    my %spaces = ();
+       $spaces{X01X} = sprintf('%s',q{ } x 1);
+       $spaces{X02X} = sprintf('%s',q{ } x 2);
+       $spaces{X03X} = sprintf('%s',q{ } x 3);
+       $spaces{X04X} = sprintf('%s',q{ } x 4);
+       $spaces{X08X} = sprintf('%s',q{ } x 8);
+       $spaces{X16X} = sprintf('%s',q{ } x 16);
+       $spaces{X32X} = sprintf('%s',q{ } x 32);
+
+
+    my ($type,$indnt,$cols,$leadnl,$trailnl,$head,$body,$text)  = @_;
+
+    #  Note Types:
+    #
+    #    0 = ''
+    #    1 - "*"
+    #    2 - "\xe2\x98\xba"  Smiley Face
+    #    3 - "\xe2\x98\x85"  Black sun with rays
+    #    4 - "dbg"
+    #    5 - "->"
+    #    6 - "!"
+    #    7 - "\xe2\x9c\x93" Check Mark
+    #    9 - "\xe2\x98\xa0" Skull & Crossbones
+    #    # - &GetFunCharacter
+
+    #  Set defaults
+    #
+    local $Text::Wrap::columns = ($cols > 80) ? $cols : 80;  # sets the wrap point. Default is 80 columns.
+    local $Text::Wrap::separator="\n";
+    local $Text::Wrap::unexpand=0;  #  Was 1 - changed 3/2017
+
+    my $nl = "\n";
+
+    $head    = $nl unless $head;
+    $indnt   = ! $indnt ? 0 : $indnt < 0 ? 0 : $indnt;
+    $leadnl  = $leadnl  < 0 ? sprintf ("%s",$nl x 1) : sprintf ("%s",$nl x $leadnl);
+    $trailnl = $trailnl < 0 ? sprintf ("%s",$nl x 1) : sprintf ("%s",$nl x $trailnl);
+
+    #  Check for requested spaces as indicated by I\d\dX.
+    #
+    foreach my $nsp (keys %spaces) {
+        $head =~ s/$nsp/$spaces{$nsp}/g if $head;
+        $body =~ s/$nsp/$spaces{$nsp}/g if $body;
+        $text =~ s/$nsp/$spaces{$nsp}/g if $text;
+    }
+
+    my $symb  = ($type == 0) ? q{}            :
+                ($type == 1) ? '*'            :
+                ($type == 2) ? "\xe2\x98\xba" :
+                ($type == 3) ? "\xe2\x98\x85" :
+                ($type == 4) ? 'dbg'          :
+                ($type == 5) ? '->'           :
+                ($type == 6) ? '!'            :
+                ($type == 7) ? "\xe2\x9c\x93" :
+                ($type == 8) ? '+'            :
+                ($type == 9) ? "\xe2\x98\xa0" : &GetFunCharacter();
+
+
+    $text  = $text ? " ($text)" : q{};
+
+    #  Format the text
+    #
+    my $header = ($symb eq '*')     ? "$symb$text  " : 
+                 ($symb eq '!')     ? "$symb$text  " : 
+                 ($symb eq '->')    ? "$symb$text "  : 
+                 ($symb =~ /dbg/)   ? "$symb$text: " : 
+                 ($symb eq '+')     ? "$symb$text  " :
+                 ($symb)            ? "$symb$text  " : q{};
+
+    $head      = "$header$head";
+    $body      = "\n\n$body" if $body;
+
+    #  Format the indent
+    #
+    my $hindnt = $indnt < 0 ? sprintf('%s',q{ } x 1) : sprintf('%s',q{ } x $indnt);
+    my $bindnt = sprintf('%s',q{ } x length "$hindnt$header");
+
+    my $windnt = ($symb eq '*')     ? "   $hindnt"   : 
+                 ($symb eq '->')    ? "  $hindnt"    : 
+                 ($symb eq '!')     ? "   $hindnt"   : 
+                 ($symb eq '+')     ? "   $hindnt"   :
+                 ($symb)            ? "   $hindnt"   : $bindnt;
+
+    $| = 1;
+    print "$leadnl";
+    print wrap($hindnt,$windnt,$head);
+    print wrap($windnt,$windnt,$body)   if $body;
+    print "$trailnl";
+
+
+return;
+} #  PrintTerminal
+
+
+

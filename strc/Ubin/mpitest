@@ -1,0 +1,736 @@
+#!/usr/bin/perl
+#===============================================================================
+#
+#         FILE:  mpitest
+#
+#  DESCRIPTION:  The mpitest tests routine the viability of the UEMS when 
+#                running on a single system or multiple nodes within a cluster.
+#                There are no manditory flags with mpitest, although the
+#                "--nodes" flag comes highly recommened unless you want to
+#                run the test on localhost with a single core. When running
+#                the test with miltiple nodes, make sure that passwordless
+#                SSH is configured between all nodes, including the localhost
+#                and itself.  That's just the way MPI works.
+#
+#       AUTHOR:  Robert Rozumalski - NWS
+#      VERSION:  18.3.1
+#      CREATED:  08 March 2018
+#===============================================================================
+#
+use warnings;
+use strict;
+require 5.008;
+use English;
+
+use Cwd 'abs_path';
+use FindBin qw($RealBin);
+use lib (abs_path("$RealBin/../Uutils"));
+
+use Ecore;
+use Elove;
+use Eenv;
+use Empi;
+use Enet;
+
+use vars qw (%MPItest);
+
+#===============================================================================
+#   So mpitest begins.  Note that while the %MPItest hash is passed into
+#   the individual modules, it is global within a module. Any variables that
+#   are required later on will be carried in this hash.
+#===============================================================================
+#
+
+    #  Override interrupt handler - Use the local one since some of the local
+    #  environment variables are needed for clean-up after the interrupt.
+    #
+    $SIG{INT} = \&Ecore::SysIntHandle;
+
+    #  Make sure the UEMS environment is set
+    #
+    &Ecore::SysExit(-1,$0) if &Eenv::SetEnvironment($ENV{UEMS});
+
+    &Ecore::SysExit(1,$0)  if &MPItest_ReturnHandler(&MPItest_Start());
+
+    &Ecore::SysExit(1,$0)  if &MPItest_ReturnHandler(&MPItest_Process());
+
+
+&Ecore::SysExit(0,$0);
+
+
+sub MPItest_Start {
+#=====================================================================================
+#  This subroutine calls routines that perform the initial configuration for
+#  mpitest prior to any real work being done. The responsibility of this 
+#  section is to:
+#
+#      1. Initialize the %MPItest hash
+#      2. Read and parse the user input options
+#
+#  Note that the handling of the return is different here than with the other
+#  routines as a return of the %MPItest hash indicates success when an empty
+#  hash means failure.
+#=====================================================================================
+#
+    return 11 unless %MPItest = &MPItest_Initialize(\%MPItest);
+    return 12 unless %MPItest = &MPItest_GetOptions(\%MPItest);
+
+return 0;
+}
+
+
+sub MPItest_Process {
+#=====================================================================================
+#  This subroutine processes all the input and then runs the MPI test.
+#=====================================================================================
+#
+    return 21 unless %MPItest = &MPItest_ConfigureNodes(\%MPItest);
+    return 22 unless %MPItest = &MPItest_ExecuteMPI(\%MPItest);
+
+return 0;
+}
+
+
+sub MPItest_Initialize {
+#===============================================================================
+#  Initialize the common hashes and variables used by mpitest
+#===============================================================================
+#
+    my $upref   = shift;
+    my %MPItest = %{$upref};
+
+    unless (defined $ENV{UEMS} and $ENV{UEMS} and -e $ENV{UEMS}) {
+        print '\n\n    !  The UEMS environment is not properly set - EXIT\n\n';
+        return ();
+    }
+
+    my $DATE               = gmtime; chomp $DATE; $DATE = "$DATE UTC";
+    my $EXE                = &Others::popit($0); $EXE =~ s/^\./\//g;
+
+
+    #  ----------------------------------------------------------------------------------
+    #  Set default language to English because the UEMS attempts to match English
+    #  words when attempting to get system information.
+    #  ----------------------------------------------------------------------------------
+    #
+    $ENV{LC_ALL}           = 'C';
+
+
+    $ENV{EMSEXE}           = $EXE;
+
+    $MPItest{DATE}         = $DATE;        #  The current system date and time
+    $MPItest{EXE}          = $ENV{EMSEXE}; #  The name of mpitest, just in case its changed
+
+    $MPItest{UEMSVER}      = &Elove::GetUEMSrelease($ENV{UEMS});
+
+    %{$MPItest{localhost}} = &Others::SystemAddressInfo();
+
+    &Elove::Greeting($MPItest{EXE},$MPItest{UEMSVER},$MPItest{localhost}{shost});
+
+
+return %MPItest;
+}
+
+
+sub MPItest_GetOptions {
+#===============================================================================
+#  The MPItest_GetOptions routine parses the flags and options passed
+#  from the command line. Simple enough.
+#===============================================================================
+#
+use Getopt::Long qw(:config pass_through);
+
+    my $upref   = shift;
+    my %Option  = %{$upref};
+
+    my %nhash  = ();
+    my @norder = ();   #  The order of the nodes
+
+    GetOptions ( "h|help|?"       => sub {&MPItest_HelpMe},  #  Just what the doctor ordered
+                 "V|v|verbose"    => \$Option{VERBOSE},      #  Dump out some information on mpitest and get out
+                 "D|d|debug"      => \$Option{DEBUG},        #  Dump out even more useless information
+                 "mpidbg"         => \$Option{MPIDBG},       #  Debug MPI routine
+                 "nodes:s"        => \$Option{HOSTS}         #  A comma separated list of nodes:cores
+               );
+    
+
+    $Option{DEBUG}   = defined $Option{DEBUG} and $Option{DEBUG}     ? 1 : 0;
+    $Option{MPIDBG}  = defined $Option{MPIDBG} and $Option{MPIDBG}   ? 1 : 0;
+    $Option{VERBOSE} = defined $Option{VERBOSE} and $Option{VERBOSE} ? 1 : 0;
+
+
+    unless (defined $Option{HOSTS}) {  # Assume local host with 1 core
+        my $mesg = "The \"--nodes\" flag was not passed.\n\nAssuming localhost with 1 core whether you like it or not.";
+        &Ecomm::PrintTerminal(6,4,88,1,2,$mesg);
+        $Option{HOSTS} = 'local';
+    }
+
+    if (defined $Option{HOSTS} and !$Option{HOSTS}) {
+        my $mesg = "When passing the \"--nodes\" flag, you must also include a comma separated string of ".
+                   "hostnames/IPs,\n\n  E.g., \"--nodes node1,node2,node3,...,nodeN\".\n\nYou may also include ".
+                   "the number of cores to use on each system by appending a \":#cores\" after each hostname in ".
+                   "the list. Go ahead and give it a try.";
+        &Ecomm::PrintTerminal(6,4,88,1,2,$mesg);
+        return ();
+    }
+
+
+    unless (@{$Option{NODES}} = &DefineRequestedNodes($Option{HOSTS})) {
+        my $mesg = "Maybe you slept through \"UEMS indoctrination Fridays\", but you must include the \"--nodes\" ".
+                   "flag along with a valid, comma-separated list of hostnames or IP addresses, on which to run the ".
+                   "test.\n\nSo, if you were looking for an argument, now you've found one!";
+        &Ecomm::PrintTerminal(6,4,88,1,2,$mesg);
+        return ();
+    }
+
+    $Option{VERBOSE} = 1 if $Option{DEBUG};
+
+
+return %Option;
+}
+
+
+
+sub MPItest_ConfigureNodes {
+#===============================================================================
+#  This routine collects information from each of the specified notes necessary
+#  for running the MPI test.
+#===============================================================================
+#
+use List::Util 'first';
+
+    my $upref   = shift;
+    my %MPItest = %{$upref};
+
+    return () unless @{$MPItest{NODES}};
+
+
+    my $lhost               = qw{};  #  Keep track of the localhost
+    %{$MPItest{nodes}}     = (); 
+    @{$MPItest{nodeorder}} = ();
+
+    my ($hostname, $address, $iface) = (0, 0, 0);  #  Initialize the key variables
+
+
+    foreach my $node (@{$MPItest{NODES}}) {
+
+        my ($host, $ncores) = split ':', $node, 2;
+
+        %{$MPItest{nodes}{$host}}  = ();
+
+        #-----------------------------------------------------------------------------------
+        #  Need to collect information about the host, specifically:
+        #  
+        #  $MPItest{nodes}{$host}{hostname}   - The hostname for the node
+        #  $MPItest{nodes}{$host}{address}    - IP Address assigned to hostname
+        #  $MPItest{nodes}{$host}{localhost}  - Local Host? (1|0 == Yes|No)
+        #  $MPItest{nodes}{$host}{headnode}   - Is this the headnode ? (1|0 == Yes|No)
+        #  $MPItest{nodes}{$host}{maxcores}   - Total number of cores available on hostname
+        #  $MPItest{nodes}{$host}{usecores}   - Number of cores to use on hostname
+        #  $MPItest{nodes}{$host}{iface}      - Name of Head Node Network Interface to use
+        #  @{$MPItest{nodeorder}}             - List of passed node order 
+        #-----------------------------------------------------------------------------------
+        #
+        &Ecomm::PrintTerminal(2,4,255,1,1,"Collecting information about the machine known as \"$host\"") if $MPItest{VERBOSE};
+
+
+        #-----------------------------------------------------------------------------------
+        #  Test whether the hostname points to the local host, in which case all the 
+        #  host information will be mined locally (Duh); otherwise, passwordless SSH
+        #  will be used.
+        #-----------------------------------------------------------------------------------
+        #
+
+        #-----------------------------------------------------------------------------------
+        #  Determine whether the argument passed is an IP address or hostname
+        #-----------------------------------------------------------------------------------
+        #
+        ($hostname, $address) = &Enet::isHostnameOrIP($host);
+
+        &Ecomm::PrintTerminal(4,7,255,1,1,"Following isHostnameOrIP     : $hostname | $address") if $MPItest{DEBUG};
+
+        unless ($hostname || $address) {
+            &Ecomm::PrintTerminal(6,6,255,1,2,"Not Part of the Plan: \"$host\" is neither IP address nor hostname.");
+            return ();
+        }
+
+
+        #-----------------------------------------------------------------------------------
+        #  Now that we have one ($hostname || $address), get the other
+        #-----------------------------------------------------------------------------------
+        #
+        if ($address) {
+            $hostname = &Enet::Address2Hostname($address);
+        } else {
+            $address  = &Enet::Hostname2Address($hostname);
+        }
+
+        &Ecomm::PrintTerminal(4,7,255,0,1,"Following IP Hostname Match  : $hostname | $address") if $MPItest{DEBUG};
+
+        unless ($hostname && $address) {
+            my $mesg = $hostname ? "Oh Poop!  Could not map $hostname to an IP address" : "Oh Poop!  Could not map $address to a hostname";
+            &Ecomm::PrintTerminal(6,6,255,1,2,$mesg);
+            return ();
+        }
+
+
+        #-----------------------------------------------------------------------------------
+        #  Prefer a long hostname if possible but only if it maps to the same IP
+        #-----------------------------------------------------------------------------------
+        #
+        my $lhostname = &Enet::Hostname2LongHostname($hostname);
+        my $laddress  = &Enet::Hostname2Address($lhostname);
+
+        $hostname = $lhostname if $address eq $laddress;
+
+        &Ecomm::PrintTerminal(4,7,255,0,1,"Following Long Hostname Match: $hostname | $address") if $MPItest{DEBUG};
+
+
+        #-----------------------------------------------------------------------------------
+        #  Get the network interface used to communicate with the remote host.
+        #-----------------------------------------------------------------------------------
+        #
+        $iface = &Enet::Address2Iface($address);
+
+        &Ecomm::PrintTerminal(4,7,255,0,1,"Following Interface IP Match : $hostname | $address | $iface") if $MPItest{DEBUG};
+
+        unless ($iface) {
+           &Ecomm::PrintTerminal(6,6,255,1,2,"I was unable to determine the network interface used to communicate to $address");
+           return ();
+        }
+
+        $MPItest{nodes}{$host}{hostname}  = $hostname;
+        $MPItest{nodes}{$host}{address}   = $address;
+        $MPItest{nodes}{$host}{iface}     = $iface;
+        $MPItest{nodes}{$host}{localhost} = &TestLocalHostname($host);
+        $MPItest{nodes}{$host}{headnode}  = $MPItest{nodes}{$host}{localhost};
+
+        unless ($MPItest{nodes}{$host}{localhost})  {
+
+            #  Since the system is not the local host, test whether it is available
+            #  and passwordless SSH can be used to run the commands necessary to 
+            #  collect the information.
+            #
+            if (my $notavail = (&TestHostAvailability($host) || &TestHostPasswdlessSSH($host))) {
+               &Ecomm::PrintTerminal(6,6,255,1,2,"Error connecting to $host: $notavail");
+
+               #  Since we cannot connect to the host then remove it from the list and continue
+               #
+               delete $MPItest{nodes}{$host};
+               next;
+            }
+        }
+
+        my %cpuinfo = $MPItest{nodes}{$host}{localhost} ? &Others::SystemCpuInfo() : &Others::SystemCpuInfo($host);
+
+        $MPItest{nodes}{$host}{sockets}   = $cpuinfo{sockets};
+        $MPItest{nodes}{$host}{maxcores}  = $cpuinfo{total_cores};
+        $MPItest{nodes}{$host}{usecores}  = ($ncores > $cpuinfo{total_cores}) ? $cpuinfo{total_cores} : $ncores;
+
+        push @{$MPItest{nodeorder}} => $host;
+
+        #----------------------------------------------------------------------------------
+        #  If the --verbose flag was passed then print out basic information on each 
+        #  system to be included in the simulation.
+        #----------------------------------------------------------------------------------
+        #
+        &PrintNodeSummary($host, \%{$MPItest{nodes}{$host}}) if $MPItest{VERBOSE};
+       
+        if ($MPItest{nodes}{$host}{localhost}) {
+
+            my %local = %{$MPItest{nodes}{$host}};
+            delete $MPItest{nodes}{$host};
+
+            %{$MPItest{nodes}{localhost}} = %local;
+
+            $lhost = $host;  #  We'll need this later
+           
+            #  Assign the localhost IP address, hostname, and interface information to the
+            #  'localhost' hash. This will be modified later if more than one host was 
+            #  included.
+            #
+            $host = 'localhost';
+            $MPItest{nodes}{$host}{iface}    = 'lo';  #  Assumes that lo is the loopback interface
+            $MPItest{nodes}{$host}{address}  = &Enet::Iface2Address($MPItest{nodes}{$host}{iface});
+            $MPItest{nodes}{$host}{hostname} = &Enet::Address2Hostname($MPItest{nodes}{$host}{address});
+
+        }
+
+    }
+
+
+    #----------------------------------------------------------------------------------
+    #  Determine whether the local host was included in the list with multiple
+    #  nodes. If so, then rename 'localhost' to $lhost; otherwise, retain 'localhost'.
+    #----------------------------------------------------------------------------------
+    #
+    if (keys %{$MPItest{nodes}} > 1 and grep {/^localhost$/} keys %{$MPItest{nodes}} ) {
+
+        my $host  = first { !/^localhost$/ } keys %{$MPItest{nodes}};  #  Get the 1st non-localhost hostname
+
+        $MPItest{nodes}{localhost}{iface}    = $MPItest{nodes}{$host}{iface};
+        $MPItest{nodes}{localhost}{address}  = &Enet::Iface2Address($MPItest{nodes}{localhost}{iface});
+        $MPItest{nodes}{localhost}{hostname} = &Enet::Address2Hostname($MPItest{nodes}{localhost}{address});
+
+        %{$MPItest{nodes}{$lhost}} = %{$MPItest{nodes}{localhost}};
+        delete $MPItest{nodes}{localhost};
+ 
+    }
+    @{$MPItest{nodeorder}} = ('localhost') if defined $MPItest{nodes}{localhost};
+
+    &Ecomm::PrintTerminal(4,7,255,1,2,"Final Node Order         : @{$MPItest{nodeorder}}") if $MPItest{DEBUG} and @{$MPItest{nodeorder}};
+
+    %MPItest = () unless  %{$MPItest{nodes}} and @{$MPItest{nodeorder}};
+
+
+return %MPItest;
+}
+
+
+sub MPItest_ExecuteMPI {
+#===============================================================================
+#  Routine to run the "/mpich2/examples/cpi" routine on the nodes specified
+#  by the user. It takes the information collected during the configuration
+#  step and send it to &Empi::ConfigureProcessMPI, the output from which
+#  provides the mpich2 command to execute.
+#===============================================================================
+#
+    my %process  = ();
+
+    my $upref    = shift;
+    my %MPItest = %{$upref};
+
+    #----------------------------------------------------------------------------------
+    #  Populate the %process hash to be passed into &Empi::ConfigureProcessMPI
+    #----------------------------------------------------------------------------------
+    #
+    $process{nogforker} = 0;
+    $process{mpicheck}  = 1;
+    $process{mpidbg}    = $MPItest{MPIDBG};
+    $process{mpiexe}    = "$ENV{EMS_UTIL}/mpich2/examples/cpi";
+
+    $process{process}   = $MPItest{EXE};
+    $process{hostpath}  = $ENV{EMS_LOGS};
+
+    @{$process{nodeorder}} = @{$MPItest{nodeorder}};
+    %{$process{nodes}}     = %{$MPItest{nodes}};
+
+
+    #----------------------------------------------------------------------------------
+    #  Collect the output from &Empi::ConfigureProcessMPI, check for errors and then
+    #  run the MPI routine.
+    #----------------------------------------------------------------------------------
+    #
+    my %mpirun  = &Empi::ConfigureProcessMPI(\%process);
+
+    if ($MPItest{DEBUG}) {
+        foreach (keys %mpirun) {next if $_ eq 'nodes'; &Ecomm::PrintTerminal(4,7,255,0,1,sprintf("MPIRUN   :  %-12s = %s",$_,$mpirun{$_}));}
+    }
+
+
+    if ($mpirun{error}) {
+        &Ecomm::PrintTerminal(6,6,255,1,2,'Error during MPI configuration',$mpirun{error});
+        return ();
+    }
+
+    if ($mpirun{error} = &Empi::WriteHostsFile(\%{$mpirun{nodes}},\$mpirun{hostsfile}) )  {
+        &Ecomm::PrintTerminal(6,6,94,1,2,'Error during writing of MPI hosts file', $mpirun{error});
+        return ();
+    }
+
+   
+    #----------------------------------------------------------------------------------
+    #  All appears normal - time to run /mpich2/examples/cpi
+    #----------------------------------------------------------------------------------
+    #
+    my $mfh     = qw{};
+    my $testlog = "$ENV{EMS_LOGS}/mpitest_cpi.log"; &Others::rm($testlog);
+
+    &Ecomm::PrintTerminal(2,4,255,2,2,"Running MPI test program (CPI) to calculate PI:");
+
+    if (my $err = &Ecore::SysExecute($mpirun{mpiexec},$testlog)) {
+
+        &Ecomm::PrintTerminal(6,6,255,0,2,"An error has occurred - Oh My! ($err)");
+        &Ecomm::PrintTerminal(0,9,94,0,1,"Try running $MPItest{EXE} again with the \"--mpidbg\" flag");
+
+        unless (open $mfh, '<', $testlog) {
+            &Ecomm::PrintTerminal(6,6,255,1,2,"Unable to open MPI test file - $testlog\n\nPossible permission problem?");
+        }
+        my @lines = <$mfh>; close $mfh; foreach (@lines) {chomp;}
+
+        if (@lines) {
+            &Ecomm::PrintTerminal(6,6,255,2,2,"Here is the information from $testlog:");
+            &Ecomm::PrintTerminal(0,9,144,0,2,"-" x 42);
+            &Ecomm::PrintTerminal(0,11,255,0,1,"Error Log: $_") foreach @lines;
+            &Ecomm::PrintTerminal(0,9,144,1,2,"-" x 42);
+        } 
+        &Ecomm::PrintTerminal(6,6,255,2,2,"It appear the log file is empty - $testlog") unless @lines;
+
+        return (); 
+    }
+         
+    unless (open $mfh, '<', $testlog) {
+        &Ecomm::PrintTerminal(6,6,255,1,2,"Unable to open MPI test file - $testlog\n\nPossible permission problem?");
+        return ();
+    }
+    my @lines = <$mfh>; close $mfh; foreach (@lines) {chomp;}
+
+
+    #----------------------------------------------------------------------------------
+    #  Format the output for output to the screen and print to file.
+    #----------------------------------------------------------------------------------
+    #
+    my %phash = ();
+    my @procs = grep {/Process /} @lines; @procs = sort @procs;
+    my @pit   = grep {/pi is approx/} @lines;
+    my @wt    = grep {/wall clock/}   @lines;
+ 
+    foreach (@procs) {
+        s/ is//g;  #  Get rid of annoying 'is on '
+        my @list = split / +/ => $_;
+        my $i = &Others::StringIndexMatchExact('of',@list);
+        $phash{$list[$i-1]} = join " ",@list[$i .. $#list];
+    }
+
+    if ($pit[0] and $wt[0]) {
+       &Ecomm::PrintTerminal(0,6,144,0,2,"-" x 42);
+       foreach my $n (sort {$a <=> $b} keys %phash) {&Ecomm::PrintTerminal(0,9,144,0,1,sprintf("Process %3s %s",$n,$phash{$n}));}
+       &Ecomm::PrintTerminal(0,6,144,1,2,"-" x 42);
+       &Ecomm::PrintTerminal(0,6,144,0,1,$pit[0]);
+       &Ecomm::PrintTerminal(0,6,144,0,1,"$wt[0] seconds")
+    }
+
+    &Others::rm($mpirun{hostsfile});
+    
+
+return %MPItest;
+}
+
+
+sub MPItest_ReturnHandler {
+#=====================================================================================
+#  The purpose of this routine is to interpret the return codes from the various
+#  mpitest subroutines. The value that is returned identifies the routine from
+#  which it was passed and any specific error, where the 10's digit identifies
+#  the routine and the 1s is the error. Some routines may provide more error
+#  information than others.
+#
+#  The routine itself returns 0 (mpitest carries on) for success or 1 (mpitest
+#  terminates) for failure.
+#=====================================================================================
+#
+    my $rc = shift;
+
+    #  Return codes 11 - 19 are reserved for the MPItest_Start Module
+    #
+    if ($rc == 11) {&Ecomm::PrintMessage(6,6,96,1,2,"Apparently, mpitest is upset with you at the moment.");}
+    if ($rc == 12) {&Ecomm::PrintMessage(0,6,96,1,2,'How are you going to explain this mess to your parents?!');}
+
+    #  Return codes 20+ are reserved for the MPItest_Process Module
+    #
+    if ($rc == 20) {&Ecomm::PrintMessage(0,6,96,1,2,'"What we have here, is failure to communicate"');}
+    if ($rc == 21) {&Ecomm::PrintMessage(0,6,96,1,2,'You appear to have lost all your nodes.');}
+    if ($rc  > 21) {&Ecomm::PrintMessage(0,6,96,1,2,'Well, your glass was half full - until you turned it upside down!');}
+
+return $rc ? 1 : 0;
+}
+
+
+sub MPItest_HelpMe {
+#===============================================================================
+#  The MPItestHelpMe routine determines what to do when the --help flag is
+#  passed with or without an argument. 
+#===============================================================================
+#
+    &Ecomm::PrintTerminal(0,7,255,1,1,&MPItest_RoutineGuidance);
+
+CORE::exit 0;
+}
+
+
+sub MPItest_RoutineGuidance  {
+#=====================================================================================
+#  A subroutine that provides love & guidance for the user.
+#=====================================================================================
+#
+    my $mesg  = qw{};
+    my @helps = ();
+
+    my $exe   = 'mpitest'; my $uce = uc $exe;
+
+    my %opts  = &MPItest_DefineOptions();  #  Get options list
+
+    push @helps => &Ecomm::TextFormat(0,0,114,0,1,"RUDIMENTARY GUIDANCE FOR $uce (Because you need it)");
+
+    $mesg = "The $exe tests routine the viability of the UEMS when running on a single system or multiple ".
+            "nodes within a cluster. There are no manditory flags with $exe, although the \"--nodes\" flag comes ".
+            "highly recommened unless you want to run the test on localhost with a single core. When running ".
+            "the test with miltiple nodes make sure that passwordless SSH is configured between all nodes, ".
+            "including the localhost and itself.  That's just the way MPI works.\n\n".
+ 
+            "Additionally, MPI must be installed in the same location on each node, which is defined by the ".
+            "\"\$EMS_MPI\" environment variable.";
+
+    push @helps => &Ecomm::TextFormat(2,2,90,1,1,$mesg);
+
+    push @helps => &Ecomm::TextFormat(0,0,114,2,1,"$uce USAGE:");
+    push @helps => &Ecomm::TextFormat(4,0,144,1,1,"% $exe  [Other flags] --nodes node1[:#cpus],node2[:#cpus],...,nodeN[:#cpus]");
+
+    push @helps => &Ecomm::TextFormat(0,0,124,2,1,"AVAILABLE OPTIONS - BECAUSE I'M BEGINNING TO LIKE THE NEFARIOUS TWINKLE IN YOUR EYE");
+
+    push @helps => &Ecomm::TextFormat(4,0,114,1,2,"Flag            Argument [optional]       Description");
+
+    foreach my $opt (sort keys %opts) {
+        push @helps => &Ecomm::TextFormat(4,0,256,0,1,sprintf("%-17s  %-18s  %-60s",$opt,$opts{$opt}{arg},$opts{$opt}{desc}));
+    }
+
+
+    push @helps => &Ecomm::TextFormat(0,0,114,2,2,"FOR ADDITIONAL HELP, LOVE AND UNDERSTANDING:");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,1,"a. Read  - docs/uems/uemsguide  (just pick a chapter, any chapter)");
+    push @helps => &Ecomm::TextFormat(2,0,114,0,1,"Or");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,1,"b. http://strc.comet.ucar.edu/software/uems");
+    push @helps => &Ecomm::TextFormat(2,0,114,0,1,"Or");
+    push @helps => &Ecomm::TextFormat(6,0,114,0,2,"c. % $exe --help  For this menu again, just in case you missed it the first time");
+
+    my $help = join '' => @helps;
+
+return $help;
+}
+
+
+sub MPItest_DefineOptions {
+#=====================================================================================
+#  This routine defined the list of options that can be passed to the program
+#  and returns them as a hash.
+#=====================================================================================
+#
+    my %opts = (
+                '--verbose'    => { arg => ''       , help => '&MPItestHelp_verbose'  , desc => 'Provide some verbosermation (It is in the lexicon now) about mpitest'},
+                '--debug'      => { arg => ''       , help => '&MPItestHelp_debug'    , desc => 'Provide even more verbosermation (I made a new word!)'},
+                '--mpidbg'     => { arg => ''       , help => '&MPItestHelp_mpidbg'   , desc => 'Add MPICH debug flags when running MPI test'},
+                '--nodes'      => { arg => 'STRING' , help => '&MPItestHelp_nodes'    , desc => 'The list of nodes & cores on which to run the MPI test'},
+                '--help'       => { arg => ''       , help => '&MPItestHelp_help'     , desc => 'Print this list again'}
+                );
+
+return %opts;
+}
+
+
+sub DefineRequestedNodes {
+#===============================================================================
+#  Routine to clean up the list of nodes passed via the --nodes flag for uemstest
+#===============================================================================
+#
+    my %nhash  = ();
+    my @nhosts = ();   #  The order of the nodes
+
+    my $hosts = shift || return ();
+
+    for ($hosts) {$_ = lc $_; s/,/;/g; s/;+/;/g; s/:+/:/g;}
+
+    foreach (split ';' => $hosts) {
+        
+        my ($node, $cores) = split ':', $_, 2;
+
+        next unless $node;
+        next unless &Enet::isHostname($node);
+
+        my ($host, $addr) = &Enet::isHostnameOrIP($node);
+
+        $node = &Enet::Address2Hostname($addr) if $addr;
+
+        $node = 'localhost' if $node =~ /^local/i;
+        
+        $cores = 1 unless $cores;
+        $cores = 1 unless &Others::isInteger($cores) and $cores > 0;
+        $cores = 1 if $node eq 'localhost' and $cores == 0;
+
+        $nhash{$node} = (defined $nhash{$node}) ? $nhash{$node} += $cores : $cores;
+
+        push @nhosts => $node unless grep {/^$node$/} @nhosts;
+
+    }
+    foreach (@nhosts) {$_ = "$_:$nhash{$_}";}
+    @nhosts = ("localhost:$nhash{localhost}") if defined $nhash{localhost};
+
+
+return @nhosts;
+}
+
+
+
+sub PrintNodeSummary {
+#===============================================================================
+#  The PrintNodeSummary routine simply prints the results to the screen
+#===============================================================================
+#
+    my ($host, $href) = @_;
+    my %info = %{$href};
+
+    my $lhost        = $info{localhost} ? "\"$host\" (localhost)" : "\"$host\"";
+    $info{localhost} = $info{localhost} ? 'Yes' : 'No';
+    $info{headnode}  = $info{headnode}  ? 'Yes' : 'No';
+
+    &Ecomm::PrintTerminal(1,6,255,1,2,"Information for $lhost");
+
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Hostname        :  $info{hostname}");
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Address         :  $info{address}");
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Local Host      :  $info{localhost}");
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Head Node       :  $info{headnode}");
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Network Iface   :  $info{iface}");
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Number Sockets  :  $info{sockets}");
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Total Cores     :  $info{maxcores}"); 
+    &Ecomm::PrintTerminal(0,9,255,0,1,"Requested Cores :  $info{usecores}");
+    
+
+return;
+}
+
+
+sub TestHostAvailability {
+#===============================================================================
+#  A simple interface to the &Enet::TestPingHost routine
+#===============================================================================
+#
+    my $host  = shift;
+
+return &Enet::TestPingHost($host) ? 0 : "TCP ping to $host - Failed (System not reachable)";
+}
+
+
+sub TestHostPasswdlessSSH {
+#===============================================================================
+#  Use the &TestHostPasswdlessSSH routine to test whether passwordless SSH can be used 
+#  to log into the targeted host.  This routine returns a value of 0 if no problems
+#  occurred or a message hopefully indicating why the test failed.
+#===============================================================================
+#
+    my $host = shift || return 'Missing hostname in argument passed to TestHostPasswdlessSSH';
+
+    return "Passwordless SSH Connection error to $host - $!" if &Enet::TestPasswordlessSSH($host);
+
+return 0;
+}
+
+
+sub TestLocalHostname {
+#===============================================================================
+#  Simple routine to determine whether the hostname passed is that of the
+#  local host or one of it's aliases.  For this test the $host hostname 
+#  will be compared to the hostnames in the %hostinfo hash.
+#===============================================================================
+#
+    my %hostinfo = &Others::SystemAddressInfo();
+
+    for (shift) {
+        return 1 if $_ eq 'local';
+        return 1 if $_ eq 'localhost';
+        return 1 if $_ eq $hostinfo{hostname0};
+        return 1 if $_ eq $hostinfo{hostname1};
+        return 1 if $_ eq $hostinfo{shost};
+    }
+
+return 0;
+}
+
+

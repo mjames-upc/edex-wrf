@@ -1,0 +1,596 @@
+#!/usr/bin/perl
+#===============================================================================
+#
+#         FILE:  uemsinfo
+#
+#  DESCRIPTION:  The uemsinfo routine is used to collect some basic information 
+#                on a machine running the UEMS. The lone optional argument is 
+#                the hostname of the machine on which the routine is being run.
+#                Note that this routine is NOT intended to be directly run from
+#                the command line but rather is to be called by a wrapper program
+#                as the output is a Perl hash data structure and should be 
+#                reformatted into something readable.
+#
+#       AUTHOR:  Robert Rozumalski - NWS
+#      VERSION:  18.3.1
+#      CREATED:  08 March 2018
+#===============================================================================
+#
+require 5.008;
+use strict;
+use warnings;
+use English;
+
+    my %UEMSinfo = &CollectSystemInformation($ARGV[0] || `hostname` || 'localhost');
+
+    &DataDump(\%UEMSinfo);
+
+exit;
+
+
+sub CollectSystemInformation {
+#===============================================================================
+#  Collect the system information and pass it back within a hash. It's up to the
+#  user to decide what to do with it.
+#===============================================================================
+#
+    my %UEMSinfo = ();  #  Hash used to collect all the information
+
+    my $lhost = shift;
+
+    %{$UEMSinfo{HOST}}  = &SystemAddressInfo(); 
+    %{$UEMSinfo{DIST}}  = &SystemLinuxInfo();  
+    %{$UEMSinfo{PROC}}  = &SystemCpuInfo();    
+    %{$UEMSinfo{MEM}}   = &SystemMemoryInfo(); 
+    %{$UEMSinfo{UEMS}}  = &SystemUemsInfo();
+    %{$UEMSinfo{USER}}  = &SystemUserInfo($<);
+    %{$UEMSinfo{IFACE}} = &SystemIfaceInfo();
+      $UEMSinfo{LHOST}  = $lhost;
+
+
+return %UEMSinfo;
+}
+
+
+sub SystemUemsInfo {
+#==================================================================================
+#  This routine collects information about the UEMS such as the directory location,
+#  UEMS & WRF version, and configuration.
+#==================================================================================
+#
+use File::stat;
+
+    my %info    = ();
+    $info{uems} = (defined $ENV{UEMS} and -d $ENV{UEMS}) ? 'Installed' : 'Not Installed';
+    
+    return %info if $info{uems} eq 'Not Installed';
+
+    $info{uemsvers} = &GetUEMSrelease($ENV{UEMS});
+    $info{wrfvers}  = &GetWRFrelease($ENV{UEMS});
+    
+    my $uems = stat($ENV{UEMS});
+    
+    $info{emshome}  = $ENV{UEMS};
+    $info{emsuid}   = $uems->uid;
+    $info{emsgid}   = $uems->gid;
+    $info{emsname}  = getpwuid $info{emsuid};
+    $info{emsmount} = (`stat -f -L -c %T $ENV{UEMS}` =~ /nfs/i) ? 'NFS' : 'Local';
+    $info{emscores} = (defined $ENV{CORES})   ? $ENV{CORES} : 0;
+    $info{emsncpus} = (defined $ENV{SOCKETS}) ? $ENV{SOCKETS} : 0;  # $info{emsncpus} remains for legacy reasons
+    $info{totcores} = $info{emsncpus} * $info{emscores};
+
+    $info{emsgname} = getgrgid $info{emsgid};  #  Get group name
+
+    $info{emsrun}   = 0;
+
+    if ($ENV{EMS_RUN} and -d $ENV{EMS_RUN}) {
+
+        my $rund = stat($ENV{EMS_RUN});
+
+        $info{emsrun} = $ENV{EMS_RUN};
+
+        $info{runduid}  = $rund->uid;
+        $info{rundgid}  = $rund->gid;
+        $info{rundname} = getpwuid $info{runduid};
+        $info{rundgname}= getgrgid $info{rundgid};
+        $info{runmount} = (`stat -f -L -c %T $ENV{EMS_RUN}` =~ /nfs/i) ? 'NFS' : 'Local';
+
+        #  Get disk space info on Run directory
+        #
+        my @df = split / +/ => qx (df -m $ENV{EMS_RUN} | grep -v system);
+
+        $info{partition}  = $df[0];
+        $info{disk_total} = floor (100. * $df[1]/1024); $info{disk_total} = $info{disk_total} * 0.01;
+        $info{disk_used}  = floor (100. * $df[2]/1024); $info{disk_used}  = $info{disk_used}  * 0.01;
+        $info{disk_avail} = floor (100. * $df[3]/1024); $info{disk_avail} = $info{disk_avail} * 0.01;
+
+    }
+    $info{bindir}  = 0;
+    $info{emsutil} = ($ENV{EMS_UTIL} and -d $ENV{EMS_UTIL}) ? $ENV{EMS_UTIL} : 0;
+    $info{utilbin} = $info{emsutil} ? "$info{emsutil}/bin" : 0;
+     
+    my @bins = ();
+    if ($ENV{EMS_BIN} and -d $ENV{EMS_BIN}) {
+        opendir (my $dfh, $ENV{EMS_BIN}); @bins = grep /^\.\w+/ , readdir $dfh; closedir $dfh;
+        $info{bindir} = $ENV{EMS_BIN};
+    } 
+    s/^\.//g foreach @bins;
+    $info{emsbin} = @bins ? join ', ' => @bins : 'Unknown or Non UEMS';
+        
+
+return %info;
+} #  SystemUemsInfo
+
+
+sub DataDump {
+#==================================================================================
+#  Use the perl data dumper routine to format and print out the hash structure
+#  such that it can be eval'd by the calling routine into a another hash.
+#==================================================================================
+#
+use Data::Dumper;
+
+    $Data::Dumper::Terse  = 1;
+    $Data::Dumper::Indent = 0;
+    print Dumper \%{$_[0]};
+
+return;
+}
+
+
+sub SystemAddressInfo {
+#==================================================================================
+#  This routine gathers information about the system hostname(s) and IP address(es)
+#  It returns a hash containing stuff it collected.
+#==================================================================================
+#
+use Sys::Hostname;
+use Net::hostent;
+use Socket;
+
+    my %info = ();
+
+    #------------------------------------------------------------------
+    #  Get basic hostname and IP information
+    #------------------------------------------------------------------
+    #
+    my $host0 = hostname;
+    my $shost = $host0;
+
+
+    #------------------------------------------------------------------
+    #  Check whether the hostname can be resolved via NIS/DNS. First
+    #  initialize the variables.
+    #------------------------------------------------------------------
+    #
+    my $host1 = '';
+    my $addr0 = `hostname -i`;
+    my $addr1 = 'None available';
+
+    #------------------------------------------------------------------
+    #
+    if (my $h = gethost($host0)) {  #  Is resolved vo
+       $host1 = $h->name;
+       $addr0 = inet_ntoa($h->addr);
+       unless (system "host $host1 > /dev/null 2>&1") {
+           my @hi = split / +/ => `host $host1`; $addr1 = $hi[-1];
+       }
+    }
+
+
+    $info{hostname0} = $host0;
+    $info{hostname1} = ($host1 and $host1 ne $host0) ? $host1 : 'None';
+    $info{nhost}     = $host1 ? $host1 : $host0;
+    $info{lhost}     = $info{nhost};
+    $info{shost}     = $shost;
+    
+    $info{address0}  = $addr0;
+    $info{address1}  = $addr1;
+
+    foreach my $key (keys %info) {chomp $info{$key};}
+
+    $info{hosts_file} = q{};
+    if ($addr0 ne $addr1) {  # Read the /etc/hosts file for additional information
+        open (my $fh, '<', '/etc/hosts'); my @hosts = <$fh>; close $fh; foreach (@hosts) {chomp; s/^\s*/    /g; s/\s+$//g;}
+        $info{hosts_file} = join "\n" => @hosts;
+    }
+
+    #---------------------------------------------------------------
+    #  Collect the interface information should it be needed
+    #---------------------------------------------------------------
+    #
+    %{$info{ifaces}} = &SystemIfaceInfo();
+
+ 
+    #  Finally, check the system date & time.  There really isn't any good place for this.
+    #  
+    my $date = gmtime(); chomp $date;
+    $info{sysdate} = $date;
+
+
+return %info;
+} #  SystemAddressInfo
+
+
+
+sub SystemLinuxInfo {
+#==================================================================================
+#  This routine attempts to mine information on the Linux distribution running
+#  the system. It's a simple approach but should work for most systems. It returns
+#  a hash containing the Linux distribution name, architecture, and more stuff.
+#  Note that the Perl "Config" hash/module could also be used in place of some
+#  system calls but it assumes the module is installed on the user's system.
+#==================================================================================
+#
+    my %info = ();
+
+    #  Get OS information
+    #
+    $info{os}      = (`/bin/uname` =~ /linux/i) ? 'Linux' : 'Non Linux';
+    $info{kernel}  = `/bin/uname -r`; my @list = split /\./ => $info{kernel};
+    $info{cputype} = `/bin/uname -p`;
+    $info{hwtype}  = `/bin/uname -i`;
+    $info{ostype}  = $list[-1];
+
+    #  Try to determine the distribution name and version
+    #
+    my $distro     = q{};
+
+    if (-e '/usr/bin/lsb_release') {  #  Not always available
+        $distro = `/usr/bin/lsb_release -ds`;
+    } else {
+        my @files = qw (os-release redhat-release fedora-release debian_version UnitedLinux-release 
+                        SuSE-release slackware-version mandrake-release gentoo-release);
+        foreach (@files) {$distro = `cat /etc/$_` if -e "/etc/$_";}
+        $distro = `cat /etc/*-release` unless $distro;
+    }
+    $info{distro} = $distro ? $distro : 'Unknown';  $info{distro} =~ s/\"//g;
+
+    foreach my $key (keys %info) {chomp $info{$key};}
+
+
+return %info;
+} #  SystemLinuxInfo
+
+
+sub SystemCpuInfo {
+#==================================================================================
+#  This routine attempts to gather information about the CPUs on the system,
+#  through use of the "lscpu" command and interrogating the /proc/cpuinfo file.
+#  Ideally, just the lscpu commend would be used because it tends to provide more
+#  accurate information on whether hyper-threading is turned ON but neither
+#  method is perfect.
+#==================================================================================
+#
+    my $host = shift || 0;
+
+    my %info = ();
+       $info{host} = $host;
+
+
+    if ($host) { 
+       %info = &SystemCpuInfo1Host(\%info);
+       %info = &SystemCpuInfo2Host(\%info);
+    } else {
+       %info = &SystemCpuInfo1(\%info);
+       %info = &SystemCpuInfo2(\%info);
+    }
+
+
+    #  User messages of love and encouragement.
+    #
+    my %mesgs=();
+
+       $mesgs{intht} = "Note:  Attempting to use virtual \"Hyper-threaded\" CPUs while running the UEMS may result in a degradation in performance.";
+
+       $info{message}= $info{ht} ? $mesgs{intht} : ' ';
+
+
+return %info;
+} #  SystemCpuInfo
+
+
+sub SystemCpuInfo1 {
+#==================================================================================
+#  This routine attempts reads the /proc/cpuinfo file and return valuable
+#  CPU related information.
+#==================================================================================
+#
+    my $href = shift;
+    my %info = %{$href};
+
+
+    #  The list of temporary variables used
+    #
+    my ($modelname, $processor, $cpucores, $siblings, $bogomips) = (0, 0, 0, 0, 0);
+    my %phyid   = ();
+    my %coreid  = ();
+    my @coreids = ();
+
+    return %info unless -e '/proc/cpuinfo';
+
+    open (my $fh, '<', '/proc/cpuinfo'); my @lines = <$fh>; close $fh; foreach (@lines) {chomp; s/^\s*/    /g; s/\s+$//g;}
+    foreach (@lines) {
+       chomp;
+       if  ( s/^\s*(model name)\s*://i )  {s/ +/ /g;($modelname = $_) =~ s/^ //g;}
+       if  ( s/^\s*(physical id)\s*://i ) {$_+=0;$phyid{$_} = (defined $phyid{$_}) ? $phyid{$_}++ : 0;}
+       if  ( s/^\s*(processor)\s*://i )   {$processor++}
+       if  ( s/^\s*(cpu cores)\s*://i )   {$cpucores = $_+=0 if $_;}
+       if  ( s/^\s*(siblings)\s*://i )    {$siblings = $_+=0 if $_;}
+       if  ( s/^\s*(core id)\s*://i )     {$_+=0;push @coreids => $_;}
+       if  ( s/^\s*(bogomips)\s*://i )    {$bogomips = $_+=0 if $_;}
+    }
+    my $amd = ($modelname =~ /amd/i) ? 1 : 0;
+
+
+    $processor = 1 unless $processor;
+    $cpucores+=0; $cpucores = 1 unless $cpucores;
+    $siblings+=0; $siblings = 1 unless $siblings;
+    $bogomips+=0; $bogomips = 0 unless $bogomips;
+
+    my $sockets   = keys %phyid;  $sockets = 1 unless $sockets; #  The number of sockets on the system
+    my $thrdscore = int ($siblings/$cpucores);
+
+
+    #  The number of "cpu cores" should be the same as the number of unique core IDs.
+    #  Note that @coreids is not currently used.
+    #
+    #  @coreids = sort {$a <=> $b} @coreids;
+    #  do {grep { !$coreid{$_}++ } @coreids };
+    #  my $ncoreids = keys %coreid;
+    #
+    $info{model_name}       = $modelname if $modelname;
+    $info{sockets}          = $sockets;
+    $info{cores_per_socket} = $cpucores;
+    $info{total_cores}      = $cpucores*$sockets;
+    $info{threads_per_core} = $thrdscore;
+    $info{siblings}         = $siblings;
+    $info{cpu_speed}        = sprintf('%.3f',0.001*int($bogomips*0.5));
+    $info{ht}               = (! $amd and $thrdscore > 1) ? 1 : 0;
+    $info{amd}              = $amd;
+
+    $info{cputype}          = `/bin/uname -p`; chomp $info{cputype};
+    $info{microarch}        = 'Unknown';
+
+    if (my $cpuid = &LocateX('cpuid')) {
+        foreach (`$cpuid`) {
+            chomp; s/ //g;
+            if (/^type/i) {
+                my ($u, $t) = split /:/ => $_, 2;
+                $t =~ s/-tp//g; $t =~ s/-64//g;
+                $info{microarch} = $t;
+            }
+        }
+    }
+
+
+return %info;
+} #  SystemCpuInfo1
+
+
+sub SystemCpuInfo2 {
+#==================================================================================
+#  This routine attempts to mine the output from the lscpu command for valuable
+#  CPU related information, and then returns it.
+#==================================================================================
+#
+    my $href = shift;
+    my %info = %{$href};
+
+    return %info unless -e '/usr/bin/lscpu';
+
+    #  The list of temporary variables used
+    #
+    my ($modelname, $sockets, $totlcores, $cpucores, $thrdscore, $bogomips, $cpuarch) = (0, 0, 0, 0, 0, 0, 0);
+    my %phyid   = ();
+    my %coreid  = ();
+    my @coreids = ();
+
+    foreach (`lscpu`) {
+        chomp; s/[\)|\(]//g; s/:\s*/:/g;
+        if  ( s/^\s*(vendor id)\s*://i )  {s/ +/ /g;($modelname = $_) =~ s/^ //;}
+        if  ( s/^\s*(architecture)\s*://i ){s/ +/ /g;($cpuarch = $_) =~ s/^ //g;}
+        if  ( s/^\s*(threads per core)\s*://i){$thrdscore = $_+=0 if $_;}
+        if  ( s/^\s*(cores per socket)\s*://i){$cpucores = $_+=0 if $_;}
+        if  ( s/^\s*(sockets)\s*://i )     {$sockets = $_+=0 if $_;}
+        if  ( s/^\s*(core id)\s*://i )     {$_+=0;push @coreids => $_;}
+        if  ( s/^\s*(bogomips)\s*://i )    {$bogomips = $_+=0 if $_;}
+        if  ( s/^\s*(cpus)\s*://i )        {$totlcores= $_+=0 if $_;}
+    } my $amd = ($modelname =~ /amd/i) ? 1 : 0;
+
+
+    $cpucores+=0; $cpucores = 1 unless $cpucores;
+    $bogomips+=0; $bogomips = 0 unless $bogomips;
+
+    unless ($cpuarch) {$cpuarch = `/bin/uname -p`; chomp $cpuarch;}
+
+    $info{model_name}       = $modelname unless $info{model_name};
+    $info{cputype}          = $cpuarch ? $cpuarch : 'Unknown';
+    $info{sockets}          = $sockets;
+    $info{cores_per_socket} = $cpucores;
+    $info{total_cores}      = $cpucores*$sockets;
+    $info{threads_per_core} = $thrdscore;
+    $info{cpu_speed}        = sprintf('%.3f',0.001*int($bogomips*0.5));
+    $info{ht}               = (! $amd and $thrdscore > 1) ? 1 : 0;
+    $info{amd}              = $amd;
+    $info{microarch}        = 'Unknown';
+
+    if (my $cpuid = &LocateX('cpuid')) {
+        foreach (`$cpuid`) {
+            chomp; s/ //g;
+            if (/^type/i) {
+                my ($u, $t) = split /:/ => $_, 2;  
+                $t =~ s/-tp//g; $t =~ s/-64//g; 
+                $info{microarch} = $t;
+            }
+        }
+    }
+
+
+return %info;
+} #  SystemCpuInfo2
+
+
+sub SystemMemoryInfo {
+#==================================================================================
+#  This routine attempts to gather information about the amount of physical memory
+#  installed on the system by interrogating the /proc/meminfo file.
+#==================================================================================
+#
+use POSIX 'floor';
+
+    my %info = ();
+       $info{available_memory} = 'Unknown';
+
+    if ( -e '/proc/meminfo' ) {
+        open (my $fh, '<', '/proc/meminfo'); my @lines = <$fh>; close $fh; foreach (@lines) {chomp; s/^\s*/    /g; s/\s+$//g;}
+        foreach (@lines) {chomp; if  (s/^\s*(MemTotal)\s*://i)  {($info{available_memory} = $_) =~ s/[a-z]+//i;}}
+        $info{available_memory} = sprintf('%.2f',0.010*floor($info{available_memory}/10240));
+    }
+
+
+return %info;
+} #  SystemMemoryInfo
+
+
+sub SystemUserInfo {
+#==================================================================================
+#  This routine collects information about the user such as the home directory,
+#  shell being used, number and group.
+#==================================================================================
+#
+    my %info  = ();
+
+    my $user  = shift;
+
+    my @uinfo = ($user =~ /^[\d]+$/) ? getpwuid $user : getpwnam $user;
+
+    $info{uname} = $uinfo[0];
+    $info{uid}   = $uinfo[2];
+    $info{gid}   = $uinfo[3];
+    $info{rname} = $uinfo[6] ? $uinfo[6] : q{};
+    $info{home}  = ($uinfo[7] and -d $uinfo[7]) ? $uinfo[7] : 0;
+    $info{shell} = $uinfo[8];
+    $info{rcfile}= ($info{shell} =~ /bash/i) ? '.bash_profile' : '.cshrc';
+    $info{mount} = (`stat -f -L -c %T $uinfo[7]` =~ /nfs/i) ? 'NFS' : 'Local';
+
+    @uinfo = getgrgid $info{gid};
+
+    $info{gname} = $uinfo[0];  #  Get group name
+
+
+return %info;
+} #  SystemUserInfo
+
+
+sub SystemIfaceInfo {
+#==================================================================================
+#  SystemIfaceInfo interrogates the local system network interfaces and returns
+#  a hash containing the interface name, hostname, and IP address, where:
+#
+#      $iface                  - The name in the network interface
+#      $myfaces{$iface}{ADDR}  - The IP address associated with the interface
+#      $myfaces{$iface}{HOST}  - Hostname if available
+#      $myfaces{$iface}{STATE} - Interface state (Up || Inactive)
+#==================================================================================
+#
+use Socket;
+use Net::hostent;
+
+
+    #------------------------------------------------------------------------
+    #  Start by collecting all the network interfaces on the local system
+    #------------------------------------------------------------------------
+    #
+    my %myfaces = ();
+    my %lips    = ();
+    my $iface   = qw{};
+
+    foreach ( qx{ (LC_ALL=C /sbin/ifconfig -a 2>&1) } ) {
+
+        $iface = $1 if /^(\S+?):?\s/;
+        next unless defined $iface;
+
+        $myfaces{$iface}{HOST}  = '' unless defined $myfaces{$iface}{HOST};
+        $myfaces{$iface}{ADDR}  = '' unless defined $myfaces{$iface}{ADDR};
+        $myfaces{$iface}{STATE} = '' unless defined $myfaces{$iface}{STATE};
+
+        $myfaces{$iface}{STATE} = 'Up'  if /\b(up )\b/i;
+        $myfaces{$iface}{ADDR}  = $1    if /inet\D+(\d+\.\d+\.\d+\.\d+)/i;
+
+        if ($myfaces{$iface}{ADDR} and ! $myfaces{$iface}{HOST}) {
+            if (my $ah = gethostbyaddr(inet_aton($myfaces{$iface}{ADDR}), AF_INET) ){
+                $myfaces{$iface}{HOST} = $ah->name;
+            }
+        }
+    }
+
+
+return %myfaces;
+}
+
+
+sub GetUEMSrelease {
+#==================================================================================
+#    Routine reads the contents of the $UEMS/strc/.release file and returns the
+#    UEMS version number. If one is not available '00.00.00.00' is returned.
+#==================================================================================
+#
+    my $ver  = 0;
+
+    my $ems = shift; return $ver unless defined $ems and $ems;
+
+    my $rfile = (-e "$ems/strc/.release")                              ? "$ems/strc/.release"       :
+                (defined $ENV{UEMS} and -e "$ENV{UEMS}/strc/.release") ? "$ENV{UEMS}/strc/.release" : 0;
+
+    return $ver unless $rfile;
+
+    open (my $fh, '<', $rfile); my @lines = <$fh>; close $fh; foreach (@lines) {chomp; $ver = $_ if /EMS/i;}
+    $ver =~ s/ //g; $ver =~ s/UEMS|EMS//g;
+
+
+return $ver;
+} #  GetUEMSrelease
+
+
+sub GetWRFrelease {
+#==================================================================================
+#    Routine reads the contents of the $UEMS/strc/.release file and returns the
+#    the WRF version number. If one is not available '0' is returned.
+#==================================================================================
+#
+    my $ver  = 0;
+
+    my $ems = shift; return $ver unless defined $ems and $ems;
+
+    my $rfile = (-e "$ems/strc/.release")                              ? "$ems/strc/.release"       :
+                (defined $ENV{UEMS} and -e "$ENV{UEMS}/strc/.release") ? "$ENV{UEMS}/strc/.release" : 0;
+
+    return $ver unless $rfile;
+
+    open (my $fh, '<', $rfile); my @lines = <$fh>; close $fh; foreach (@lines) {chomp; $ver = $_ if /WRF|ARW/i;}
+    $ver =~ s/ //g; $ver =~ s/WRF|ARW//g;
+
+
+return $ver;
+} #  GetWRFrelease
+
+
+sub LocateX {
+#==================================================================================
+#  Routine to locate a Linux utility on the system
+#==================================================================================
+#
+    my $rutil = shift; my $util = (-e '/usr/bin/which2') ? `/usr/bin/which --skip-alias --skip-functions --skip-dot --skip-tilde $rutil 2> /dev/null`
+                                                         : `which $rutil 2> /dev/null`; chomp $util;
+
+    unless (-s $util and -x $util) {
+        $util = `whereis -b $rutil`; chomp $util; if ($util) {my @util = split / / => $util; $util = $#util ? $util[1] : 0;}
+        $util = (-s "/usr/bin/$rutil") ? "/usr/bin/$rutil" : (-s "/bin/$rutil") ? "/bin/$rutil" : 0 unless -s $util;
+    } chomp $util;
+
+
+return $util ? $util : 0;
+} #  LocateX
+
+

@@ -1,0 +1,307 @@
+#%Module######################################################################
+#
+#  This module file is used to define the environment for running the Unified
+#  Environmental Modeling System (UEMS) on the Weather and Climate Operational
+#  Supercomputing System (WCOSS).  Note that this module is to be loaded by
+#  all UEMS users on WCOSS; however, access to the development side is 
+#  determined by the GROUP environment setting.
+#
+#  Author:  Robert Rozumalski - NWS/OCLO/FDTD
+##############################################################################
+#
+
+proc ModulesHelp { } {
+   puts "Sets the working environment for the development side Unified Environmental"
+   puts "Modeling System (UEMS) on WCOSS. It's fun, try it. All the cool modelers would"
+   puts "be doing it, if there were any. Hey, you can be the first!"
+}
+
+module-whatis   "Sets the working environment for running UEMS on WCOSS"
+
+
+
+#  We will stick to the approved module naming convention for the time being,
+#  which is {package name}-{user}/${version} or something like that. Thus the
+#  following variables must be set.
+#
+set lname uems
+set user  wcoss
+set ver   15.56
+
+
+
+#  Define the GROUP that will have access to the development side of the system
+#  If the user's GROUP does not match GROUP_DEV then the they will be working
+#  on the live side of the system.
+#
+set GROUP_DEV oclo
+set USER_DEV  Robert.Rozumalski
+
+
+#  Define the root directory to the local model project. Hopefully this will
+#  not change but you never know.
+#
+set LMP_ROOT  /regions/noscrub/Robert.Rozumalski/LocalModelingProject
+
+
+#  ****************************************************************************
+#  IMPORTANT - Set the top level of the UEMS. This must be correct for 
+#  everything to operate as advertised. At least that is the plan.
+#  ****************************************************************************
+#
+
+
+#  Define the root directory to the local model project. Hopefully this will
+#  not change but you never know.
+#
+set LMP_ROOT  /regions/noscrub/Robert.Rozumalski/LocalModelingProject
+ 
+
+#  Define the location of the development & live sides of the UEMS on WCOSS
+#
+set UEMS_DEV  $LMP_ROOT/LocalModelUEMS.Devel
+set UEMS_LIV  $LMP_ROOT/LocalModelUEMS.Live
+
+
+#  We begin with some configurable parameters that serve the greater good of
+#  almost all of humanity as well as the UEMS, just the way it should be.
+#
+
+#  UEMS_LOCAL
+#
+#     Setting the UEMS_LOCAL environment variable tells the UEMS that the default
+#     location for the EMS_RUN directory (Default: uems/runs) is to be reassigned to
+#     another location. You would set UEMS_LOCAL = 1 if the UEMS is being controlled
+#     a "UEMS administrator" but there will be multiple users creating domains and
+#     running simulations, such as in a classroom setting.
+#
+#     If UEMS_LOCAL is set, then the new locations for EMS_RUN and EMS_LOGS will be
+#     defined by the RUNS_HOME variable below. Additionally, if the user is in
+#     the development group then UEMS_LOCAL will be reset to 0.
+#
+setenv UEMS_LOCAL 1
+
+
+
+#  RUNS_HOME
+#
+#     In the event that UEMS_LOCAL = 1, RUNS_HOME will define the top level of the 
+#     user's working directory, i.e., where "uems/runs" and "uems/logs" will be 
+#     located. If UEMS_LOCAL is not defined (or 0) then RUNS_HOME will be ignored
+#     and $EMS_RUN and $EMS_LOGS will be assigned their default locations. If 
+#     UEMS_LOCAL = 1 but RUNS_HOME is not defined or invalid, then the top level
+#     of the user's home directory, $env(HOME), will be used.*
+#
+#     If a single large multi-user space is to be used for running the UEMS, it is
+#     recommended that RUNS_HOME be set to something like "<path to space>/$env(USER)".
+#
+#     * On WCOSS the default location for RUNS_HOME will be $UEMS_LIV/runs/$env(USER),
+#     just because the UEMS Oligarch likes it like that.
+#      
+#setenv RUNS_HOME $env(HOME)
+
+
+
+#  EMS_NAWIPS
+#
+#     The EMS includes the NAWIPS the diagnostic and display system. Just because one
+#     of the many mottos here at EMS world headquarters is "Giving more of what they
+#     need, whether they need it or not!".
+#
+#     By default the EMS_NAWIPS setting is commented out. You may remove the '#' if you
+#     want to use NAWIPS.  If you have your own NAWIPS release installed and wish to
+#     use it instead, you may either replace the path to the EMS provided release with
+#     your own or leave EMS_NAWIPS blank and set the NAWIPS environment outside this file.
+#
+#setenv EMS_NAWIPS $env(UEMS)/util/nawips
+
+
+
+#  LSF_SYS
+#
+#     Set LSF_SYS = 1 if the UEMS is being run on a system that uses a Load Sharing Facility
+#     (LSF) and batch job scheduler to submit large jobs. This is usually the case when
+#     running on a large multi-user system within a High Performance Computing environment.
+#     Setting LSF_SYS = 1 will instruct the UEMS run-time scripts to create and submit the
+#     MPI run portions of the system to the batch job scheduler rather than run directly
+#     from the command line.
+#
+setenv LSF_SYS 1
+
+
+#  PROJECT_CODE
+#
+#     The PROJECT_CODE is the code used  when  submitting batch jobs to the LSF on WCOSS.
+#     For now use PROJECT_CODE = "REGION-T2O" although this code may need to change in
+#     future.
+#
+setenv PROJECT_CODE REGION-T2O
+
+
+
+#  ----------------------------------------------------------------------------------
+#  UEMS package environment variables - Here top level "UEMS" value is used to set
+#  "EMS", which, in turn defines all the other environment variables. This is
+#  done to avoid mashing of variables with older versions of the EMS still running
+#  on a system.
+#  ----------------------------------------------------------------------------------
+#
+
+#  Make sure UEMS_LOCAL and RUNS_HOME have values
+#
+if { ! [info exists ::env(UEMS_LOCAL) ] } {setenv UEMS_LOCAL 0}
+if { $env(USER) == $USER_DEV }   {setenv UEMS_LOCAL 0}
+if { $env(UEMS_LOCAL) != 0 }     {setenv UEMS_LOCAL 1}
+
+setenv UEMS [expr {$env(UEMS_LOCAL) == 1 ? $UEMS_LIV : $UEMS_DEV} ]
+
+ 
+setenv EMS          $env(UEMS)
+setenv EMS_HOME     $env(EMS)
+
+setenv EMS_BIN      $env(EMS_HOME)/bin
+setenv EMS_DATA     $env(EMS_HOME)/data
+
+setenv EMS_STRC     $env(EMS_HOME)/strc
+setenv STRC_BIN     $env(EMS_STRC)/Ubin
+setenv STRC_PREP    $env(EMS_STRC)/Uprep
+setenv STRC_RUN     $env(EMS_STRC)/Urun
+setenv STRC_POST    $env(EMS_STRC)/Upost
+setenv STRC_AUTO    $env(EMS_STRC)/Uauto
+setenv STRC_UTIL    $env(EMS_STRC)/Uutils
+
+setenv EMS_RUN      $env(EMS_HOME)/runs
+setenv EMS_LOGS     $env(EMS_HOME)/logs
+
+
+#  Make sure UEMS_LOCAL and RUNS_HOME have values
+#
+if { ! [info exists ::env(RUNS_HOME) ] } {setenv RUNS_HOME 0}
+if { $env(RUNS_HOME) == 0 } {setenv RUNS_HOME $env(EMS_RUN)/$env(USER)}
+
+
+if { $env(UEMS_LOCAL) == 1 } {
+
+   #  You may change these if UEMS_LOCAL is set.  Notice that the default location
+   #  is under the user's home directory; however, if there is to be an alternate
+   #  location then use the RUNS_HOME variable to redefine the location.
+   #
+   #  setenv EMS_RUN      $env(RUNS_HOME)/uems/runs
+   #  setenv EMS_LOGS     $env(RUNS_HOME)/uems/logs
+   #
+   setenv EMS_RUN      $env(RUNS_HOME)/runs
+   setenv EMS_LOGS     $env(RUNS_HOME)/logs
+
+   if { ! [file isdirectory $env(EMS_RUN)]  } { file mkdir $env(EMS_RUN) }
+   if { ! [file isdirectory $env(EMS_LOGS)] } { file mkdir $env(EMS_LOGS) }
+
+   #  This will be used if NAWIPS is included 
+   #
+   setenv METDAT       $env(RUNS_HOME)/metdat/gempak
+
+}
+unsetenv RUNS_HOME; #  No longer needed
+
+setenv RUN_BASE     $env(EMS_RUN)
+
+setenv EMS_UTIL     $env(EMS_HOME)/util
+setenv EMS_DOCS     $env(EMS_HOME)/docs
+setenv EMS_CONF     $env(EMS_HOME)/conf
+setenv EMS_ETC      $env(EMS_HOME)/etc
+
+setenv EMS_UBIN     $env(EMS_UTIL)/bin
+setenv EMS_MPI      $env(EMS_UTIL)/mpich2
+
+setenv DATA_GEOG    $env(EMS_DATA)/geog
+setenv DATA_TBLS    $env(EMS_DATA)/tables
+
+setenv DW           $env(EMS_HOME)/domwiz
+setenv DW_BIN       $env(DW)/bin
+setenv DW_LIB       $env(DW)/libs
+
+
+if { $env(UEMS_LOCAL) == 0 } {
+   #  For those determined to build your own UEMS - Bless You!
+   #
+   setenv EMS_BUILD   $env(EMS_UTIL)/UEMSbuild
+
+   setenv BUILD_SRC   $env(EMS_BUILD)/src
+   setenv BUILD_LIBS  $env(EMS_BUILD)/libs
+   setenv BUILD_BIN   $env(EMS_BUILD)/bin
+
+   setenv SRC_LIBS    $env(BUILD_SRC)/libs
+   setenv SRC_UTILS   $env(BUILD_SRC)/utils
+   setenv SRC_POST    $env(BUILD_SRC)/post
+   setenv SRC_MODELS  $env(BUILD_SRC)/models
+
+
+   setenv EWRF        $env(EMS_BUILD)/src/models/wrf
+   setenv EWPS        $env(EMS_BUILD)/src/models/wps
+   setenv EPOST       $env(EMS_BUILD)/src/post/emsupp/src
+   setenv EBUFR       $env(EMS_BUILD)/src/post/emsbufr
+
+
+   #  The following compiler variables are used when building
+   #  the system and may need to change someday.
+   #
+   setenv COMPLC      intel
+   setenv COMP        Intel
+}
+
+setenv MPSTKZ 512M
+setenv OMP_STACKSIZE 64M
+setenv MP_STACK_SIZE $env(OMP_STACKSIZE)
+
+setenv NO_STOP_MESSAGE 1  
+setenv UEMS_MODULE     1
+
+
+#  Set the GrADS environment variables
+#
+setenv GADDIR $env(EMS_UTIL)/grads/data
+setenv GAUDFT $env(EMS_UTIL)/grads/data/tables
+setenv GASCRP $env(EMS_UTIL)/grads/scripts
+
+
+#  Set the NAWIPS environment variables
+#
+if { [info exists ::env(EMS_NAWIPS) ] && [file isdirectory $env(EMS_NAWIPS)] } {
+    setenv   NAWIPS $env(EMS_NAWIPS)
+    unsetenv EMS_NAWIPS
+    module load UEMSnawips
+}
+
+
+#  Set the NCVIEW environment variables
+#
+setenv UDUNITS2_XML_PATH $env(EMS_UTIL)/ncview/udunits/udunits2.xml
+setenv NCVIEWBASE        $env(EMS_UTIL)/ncview/lib
+setenv XAPPLRESDIR       $env(EMS_UTIL)/ncview/app-defaults
+
+set-alias  ncview {ncview -extra -minmax med -private -no1d}
+
+
+set xresources ""
+if { [file isdirectory $env(XAPPLRESDIR)] } {
+    set xresources "$env(EMS_UTIL)/ncview/app-defaults/%N"
+    if { [info exists ::env(XUSERFILESEARCHPATH)] } {
+        prepend-path  XUSERFILESEARCHPATH $xresources
+    } else {
+        setenv XUSERFILESEARCHPATH ${xresources}
+    }
+}
+
+#  Make sure the paths are correctly set and place the UEMS paths up front
+#
+prepend-path   PATH   $env(EMS_UTIL)/HDFView/bin
+prepend-path   PATH   $env(EMS_UTIL)/ncview/bin
+prepend-path   PATH   $env(EMS_MPI)/bin
+prepend-path   PATH   $env(GADDIR)
+prepend-path   PATH   $env(EMS_UTIL)/bin
+prepend-path   PATH   $env(EMS_UTIL)/grads/bin
+prepend-path   PATH   $env(EMS_BIN)
+prepend-path   PATH   $env(DW_BIN)
+prepend-path   PATH   $env(STRC_BIN)
+prepend-path   PATH   .
+
+#  Done!
